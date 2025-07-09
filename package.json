@@ -1,0 +1,51 @@
+{
+  "name": "voice-to-llm-desktop-assistant",
+  "version": "1.0.0",
+  "description": "A desktop assistant that transcribes voice to text and processes it with LLM",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "dist": "electron-builder --publish=never"
+  },
+  "keywords": [
+    "electron",
+    "voice",
+    "llm",
+    "assistant",
+    "whisper",
+    "openai"
+  ],
+  "author": "Voice-to-LLM Assistant",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.6.4"
+  },
+  "dependencies": {
+    "openai": "^4.20.1",
+    "node-record-lpcm16": "^1.0.1",
+    "clipboardy": "2.3.0",
+    "electron-store": "^8.1.0",
+    "node-wav": "^0.0.2",
+    "node-global-key-listener": "^0.3.0"
+  },
+  "build": {
+    "appId": "com.voicetollm.assistant",
+    "productName": "Voice-to-LLM Assistant",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!node_modules/**/*",
+      "!dist/**/*",
+      "!build/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    }
+  }
+} 
