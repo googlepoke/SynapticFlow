@@ -3,25 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SynapticFlow</title>
+    <title>Voice-to-LLM Assistant</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <h1><img src="assets/logo.png" alt="Voice Assistant" class="header-logo"> SynapticFlow</h1>
+            <h1><img src="assets/logo.png" alt="Voice Assistant" class="header-logo"> Voice-to-LLM Assistant</h1>
             <div class="recording-indicator" id="recordingIndicator" style="display: none;">
                 <div class="mic-animation"><img src="assets/logo.png" alt="Recording" class="recording-logo"></div>
                 <span>RECORDING - Speak Now!</span>
-                <!-- Enhanced: Recording progress bar -->
-                <div class="recording-progress-container" id="recordingProgressContainer" style="display: none;">
-                    <div class="recording-progress-bar">
-                        <div class="recording-progress-fill" id="recordingProgressFill" style="width: 0%"></div>
-                    </div>
-                    <div class="recording-time-info">
-                        <span id="recordingElapsed">0s</span> / <span id="recordingRemaining">5m</span>
-                    </div>
-                </div>
             </div>
             <div class="status-indicator" id="statusIndicator">
                 <span class="status-text" id="statusText">Ready</span>
@@ -29,21 +20,31 @@
         </header>
 
         <main class="main-content">
+            <section class="api-section">
+                <h2>🔑 API Configuration</h2>
+                <div class="api-input-group">
+                    <input type="password" id="apiKeyInput" placeholder="Enter your OpenAI API key" class="api-input">
+                    <button id="saveApiKey" class="btn btn-primary">Save</button>
+                    <button id="testApiKey" class="btn btn-secondary">Test</button>
+                </div>
+                <div id="apiStatus" class="api-status"></div>
+            </section>
+
             <section class="instruction-section">
                 <h2>📝 Instruction Template</h2>
                 <div class="template-selector">
                     <select id="templateSelect" class="template-select">
-                        <option value="" class="custom-instruction-option">🔧 Custom instruction...</option>
-                        <option value="rewrite" class="system-template-option">⚙️ Rewrite</option>
-                        <option value="summarize" class="system-template-option">⚙️ Summarize</option>
-                        <option value="translate" class="system-template-option">⚙️ Translate</option>
-                        <option value="expand" class="system-template-option">⚙️ Expand</option>
-                        <option value="simplify" class="system-template-option">⚙️ Simplify</option>
-                        <option value="formal" class="system-template-option">⚙️ Formal</option>
-                        <option value="casual" class="system-template-option">⚙️ Casual</option>
-                        <option value="bullet" class="system-template-option">⚙️ Bullet Points</option>
-                        <option value="question" class="system-template-option">⚙️ Generate Questions</option>
-                        <option value="action" class="system-template-option">⚙️ Extract Action Items</option>
+                        <option value="">Custom instruction...</option>
+                        <option value="rewrite">Rewrite</option>
+                        <option value="summarize">Summarize</option>
+                        <option value="translate">Translate</option>
+                        <option value="expand">Expand</option>
+                        <option value="simplify">Simplify</option>
+                        <option value="formal">Formal</option>
+                        <option value="casual">Casual</option>
+                        <option value="bullet">Bullet Points</option>
+                        <option value="question">Generate Questions</option>
+                        <option value="action">Extract Action Items</option>
                     </select>
                     <button id="addTemplateBtn" class="btn btn-small">Add</button>
                     <button id="editTemplateBtn" class="btn btn-small">Edit</button>
@@ -52,22 +53,15 @@
                     <button id="importTemplatesBtn" class="btn btn-small">Import</button>
                 </div>
                 <textarea id="instructionInput" placeholder="Enter your markdown instruction here...&#10;&#10;Example:&#10;Please rewrite the following transcript in a professional tone:" class="instruction-textarea"></textarea>
-                
-                <!-- RAG Search Section -->
-                <div class="rag-search-container">
-                    <div class="rag-search-checkbox">
-                        <input type="checkbox" id="ragSearchCheckbox" class="rag-search-checkbox-input">
-                        <label for="ragSearchCheckbox" class="rag-search-label">🔍 RAG Search</label>
+            </section>
+
+            <section class="hotkey-section">
+                <h2>⌨️ Hotkey Options</h2>
+                <div class="hotkey-info">
+                    <div class="hotkey-display">
+                        <kbd>Win</kbd> + <kbd>Alt</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd>
                     </div>
-                    
-                    <!-- RAG Associations Section (hidden by default) -->
-                    <div id="ragAssociationsSection" class="rag-associations-section" style="display: none;">
-                        <h4>RAG Associations (Max 5)</h4>
-                        <div id="ragAssociationsList" class="rag-associations-list">
-                            <!-- Dynamic RAG associations will be added here -->
-                        </div>
-                        <button id="addRagAssociationBtn" class="btn btn-small">Add RAG Association</button>
-                    </div>
+                    <p class="hotkey-description">Hold either combination to record, release to process</p>
                 </div>
             </section>
 
@@ -79,9 +73,10 @@
                     </div>
                     <div class="llm-clipboard-actions">
                         <button id="clearLlmClipboard" class="btn btn-small">Clear</button>
+                        <button id="previewLlmClipboard" class="btn btn-small">Preview</button>
                     </div>
                 </div>
-                <div class="llm-clipboard-preview" id="llmClipboardPreview">
+                <div class="llm-clipboard-preview" id="llmClipboardPreview" style="display: none;">
                     <h4>LLM Clipboard Content:</h4>
                     <div id="llmClipboardContent" class="clipboard-content"></div>
                 </div>
@@ -89,19 +84,6 @@
 
             <section class="conversation-section">
                 <h2>💬 Conversation</h2>
-                <!-- Enhanced: Chunked transcription progress -->
-                <div class="transcription-progress" id="transcriptionProgress" style="display: none;">
-                    <div class="progress-header">
-                        <h4>🔄 Processing Long Audio</h4>
-                        <span id="chunkProgressText">Analyzing file...</span>
-                    </div>
-                    <div class="chunk-progress-bar">
-                        <div class="chunk-progress-fill" id="chunkProgressFill" style="width: 0%"></div>
-                    </div>
-                    <div class="chunk-info">
-                        <span id="chunkCurrent">0</span> of <span id="chunkTotal">0</span> chunks processed
-                    </div>
-                </div>
                 <div class="conversation-container">
                     <div class="transcript-container">
                         <h3>📝 Your Speech (Transcript)</h3>
@@ -115,20 +97,6 @@
                             <p class="no-response">AI response will appear here after processing.</p>
                         </div>
                     </div>
-                </div>
-            </section>
-
-            <section class="rag-store-section">
-                <h2>🗄️ RAG Store</h2>
-                <div class="template-selector">
-                    <select id="ragStoreSelect" class="template-select">
-                        <option value="">Select RAG Store...</option>
-                    </select>
-                    <button id="addRagStoreBtn" class="btn btn-small">Add</button>
-                    <button id="editRagStoreBtn" class="btn btn-small">Edit</button>
-                    <button id="deleteRagStoreBtn" class="btn btn-small">Delete</button>
-                    <button id="exportRagStoresBtn" class="btn btn-small">Export</button>
-                    <button id="importRagStoresBtn" class="btn btn-small">Import</button>
                 </div>
             </section>
 
@@ -163,24 +131,15 @@
                         <label for="llmShortcutsEnabled">Enable LLM Shortcuts:</label>
                         <input type="checkbox" id="llmShortcutsEnabled" class="setting-checkbox" checked>
                     </div>
-                    <div class="setting-item copy-send-container">
-                        <label for="copySendCheckbox">
-                            Copy Send:
-                            <div id="copySendLoadingIndicator" class="copy-send-loading"></div>
-                        </label>
-                        <input type="checkbox" id="copySendCheckbox" class="setting-checkbox">
+                    <div class="setting-item">
+                        <label>LLM Copy:</label>
+                        <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd>
+                    </div>
+                    <div class="setting-item">
+                        <label>LLM Paste:</label>
+                        <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>V</kbd>
                     </div>
                 </div>
-            </section>
-
-            <section class="api-section">
-                <h2>🔑 API Configuration</h2>
-                <div class="api-input-group">
-                    <input type="password" id="apiKeyInput" placeholder="Enter your OpenAI API key" class="api-input">
-                    <button id="saveApiKey" class="btn btn-primary">Save</button>
-                    <button id="testApiKey" class="btn btn-secondary">Test</button>
-                </div>
-                <div id="apiStatus" class="api-status"></div>
             </section>
         </main>
 
@@ -208,33 +167,9 @@
             </div>
         </div>
 
-        <!-- RAG Store Modal -->
-        <div id="ragStoreModal" class="modal" style="display: none;">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3 id="ragModalTitle">Add RAG Store</h3>
-                    <span class="modal-close" id="ragModalClose">&times;</span>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label for="ragStoreNameInput">RAG Store Name:</label>
-                        <input type="text" id="ragStoreNameInput" class="modal-input" placeholder="Enter RAG store name (max 100 chars)" maxlength="100">
-                    </div>
-                    <div class="form-group">
-                        <label for="ragStoreIdInput">Vector Store ID:</label>
-                        <input type="text" id="ragStoreIdInput" class="modal-input" placeholder="Enter OpenAI Vector Store ID (max 100 chars)" maxlength="100">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button id="ragModalSave" class="btn btn-primary">Save</button>
-                    <button id="ragModalCancel" class="btn btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-
         <footer class="footer">
             <div class="footer-content">
-                <p>SynapticFlow v1.0.0</p>
+                <p>Voice-to-LLM Assistant v1.0.0</p>
                 <div class="footer-links">
                     <button id="testInjection" class="btn btn-small">Test Injection</button>
                     <button id="clearTranscript" class="btn btn-small">Clear Transcript</button>

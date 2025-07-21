@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "exportDate": "2024-01-15T10:30:00.000Z",
+  "templates": [
+    {
+      "id": "1705312200000abc123",
+      "name": "Professional Email",
+      "content": "Please convert the following transcript into a professional email format with proper greeting, body, and closing."
+    },
+    {
+      "id": "1705312200000def456",
+      "name": "Meeting Summary",
+      "content": "Please create a structured meeting summary from the following transcript, including key points, action items, and next steps."
+    },
+    {
+      "id": "1705312200000ghi789",
+      "name": "Technical Documentation",
+      "content": "Please rewrite the following transcript as technical documentation with clear headings, code examples where relevant, and step-by-step instructions."
+    }
+  ]
+} 

@@ -28,17 +28,10 @@ const autoPasteCheckbox = document.getElementById('autoPasteCheckbox');
 const llmClipboardStatus = document.getElementById('llmClipboardStatus');
 const llmClipboardText = document.getElementById('llmClipboardText');
 const clearLlmClipboard = document.getElementById('clearLlmClipboard');
+const previewLlmClipboard = document.getElementById('previewLlmClipboard');
 const llmClipboardPreview = document.getElementById('llmClipboardPreview');
 const llmClipboardContent = document.getElementById('llmClipboardContent');
 const llmShortcutsEnabled = document.getElementById('llmShortcutsEnabled');
-// Add new DOM element for Copy Send
-const copySendCheckbox = document.getElementById('copySendCheckbox');
-const copySendLoadingIndicator = document.getElementById('copySendLoadingIndicator');
-// Enhanced: Recording progress elements
-const recordingProgressContainer = document.getElementById('recordingProgressContainer');
-const recordingProgressFill = document.getElementById('recordingProgressFill');
-const recordingElapsed = document.getElementById('recordingElapsed');
-const recordingRemaining = document.getElementById('recordingRemaining');
 // Modal elements
 const templateModal = document.getElementById('templateModal');
 const modalTitle = document.getElementById('modalTitle');
@@ -47,33 +40,8 @@ const templateNameInput = document.getElementById('templateNameInput');
 const templateContentInput = document.getElementById('templateContentInput');
 const modalSave = document.getElementById('modalSave');
 const modalCancel = document.getElementById('modalCancel');
-// RAG Store DOM elements
-const ragStoreSelect = document.getElementById('ragStoreSelect');
-const addRagStoreBtn = document.getElementById('addRagStoreBtn');
-const editRagStoreBtn = document.getElementById('editRagStoreBtn');
-const deleteRagStoreBtn = document.getElementById('deleteRagStoreBtn');
-const exportRagStoresBtn = document.getElementById('exportRagStoresBtn');
-const importRagStoresBtn = document.getElementById('importRagStoresBtn');
-// RAG Store Modal elements
-const ragStoreModal = document.getElementById('ragStoreModal');
-const ragModalTitle = document.getElementById('ragModalTitle');
-const ragModalClose = document.getElementById('ragModalClose');
-const ragStoreNameInput = document.getElementById('ragStoreNameInput');
-const ragStoreIdInput = document.getElementById('ragStoreIdInput');
-const ragModalSave = document.getElementById('ragModalSave');
-const ragModalCancel = document.getElementById('ragModalCancel');
-// RAG Search DOM elements
-const ragSearchCheckbox = document.getElementById('ragSearchCheckbox');
-const ragAssociationsSection = document.getElementById('ragAssociationsSection');
-const ragAssociationsList = document.getElementById('ragAssociationsList');
-const addRagAssociationBtn = document.getElementById('addRagAssociationBtn');
 let userTemplates = [];
 let currentEditingTemplate = null;
-// RAG Store variables
-let ragStores = [];
-let currentEditingRagStore = null;
-// RAG Search variables
-let currentTemplate = null;
 
 // Prompt templates
 const promptTemplates = {
@@ -136,26 +104,10 @@ async function initializeApp() {
     
     // Load user templates first
     userTemplates = await ipcRenderer.invoke('get-instruction-templates');
-    
-    // Ensure backward compatibility: add RAG fields to existing templates
-    userTemplates.forEach(template => {
-        if (!template.hasOwnProperty('ragSearch')) {
-            template.ragSearch = false;
-        }
-        if (!template.hasOwnProperty('ragAssociations')) {
-            template.ragAssociations = [];
-        }
-    });
-    
-    // Make userTemplates globally accessible for main process
-    window.userTemplates = userTemplates;
     renderTemplateOptions();
 
     // Setup template selection with both built-in and user templates
     templateSelect.addEventListener('change', onTemplateSelect);
-    
-    // Initialize RAG UI
-    updateRagUI();
     
     // Wire up template CRUD buttons
     console.log('Wiring up template buttons:', {
@@ -171,43 +123,15 @@ async function initializeApp() {
     exportTemplatesBtn.addEventListener('click', exportTemplates);
     importTemplatesBtn.addEventListener('click', importTemplates);
 
-    // Load user RAG stores and setup event listeners
-    ragStores = await ipcRenderer.invoke('get-rag-stores');
-    window.ragStores = ragStores;
-    renderRagStoreOptions();
-
-    // Setup RAG store CRUD buttons
-    console.log('Setting up RAG store buttons:', {
-        addRagStoreBtn: !!addRagStoreBtn,
-        editRagStoreBtn: !!editRagStoreBtn,
-        deleteRagStoreBtn: !!deleteRagStoreBtn,
-        exportRagStoresBtn: !!exportRagStoresBtn,
-        importRagStoresBtn: !!importRagStoresBtn
-    });
-    addRagStoreBtn.addEventListener('click', addRagStore);
-    editRagStoreBtn.addEventListener('click', editRagStore);
-    deleteRagStoreBtn.addEventListener('click', deleteRagStore);
-    exportRagStoresBtn.addEventListener('click', exportRagStores);
-    importRagStoresBtn.addEventListener('click', importRagStores);
-    ragStoreSelect.addEventListener('change', onRagStoreSelect);
-
-    // Setup RAG search functionality
-    console.log('Setting up RAG search functionality:', {
-        ragSearchCheckbox: !!ragSearchCheckbox,
-        ragAssociationsSection: !!ragAssociationsSection,
-        addRagAssociationBtn: !!addRagAssociationBtn
-    });
-    ragSearchCheckbox.addEventListener('change', onRagSearchToggle);
-    addRagAssociationBtn.addEventListener('click', addRagAssociation);
-
     // Setup LLM clipboard buttons
     console.log('Setting up LLM clipboard buttons:', {
         clearLlmClipboard: !!clearLlmClipboard,
+        previewLlmClipboard: !!previewLlmClipboard,
         llmShortcutsEnabled: !!llmShortcutsEnabled
     });
 
     clearLlmClipboard.addEventListener('click', clearLlmClipboardContent);
-    // Removed previewLlmClipboard event listener - content is now always visible
+    previewLlmClipboard.addEventListener('click', toggleLlmClipboardPreview);
 
     // Load LLM shortcuts setting
     const llmShortcutsEnabledValue = await ipcRenderer.invoke('get-llm-shortcuts-enabled');
@@ -226,47 +150,15 @@ async function initializeApp() {
         await ipcRenderer.invoke('save-auto-paste', autoPasteCheckbox.checked);
     });
 
-    // Add event listener for Copy Send checkbox
-    copySendCheckbox.addEventListener('change', async () => {
-        await ipcRenderer.invoke('save-copy-send', copySendCheckbox.checked);
-    });
-
-    // Add IPC listeners for Copy Send processing
-    ipcRenderer.on('copy-processing-started', () => {
-        showCopySendLoading(true);
-    });
-
-    ipcRenderer.on('copy-processing-completed', () => {
-        showCopySendLoading(false);
-        showStatus('LLM processing completed - ready to paste', 'success');
-    });
-
-    ipcRenderer.on('copy-processing-error', (event, errorMessage) => {
-        showCopySendLoading(false);
-        showStatus('Background LLM processing failed: ' + errorMessage, 'error');
-    });
-
     // Wire up modal event listeners
     modalClose.addEventListener('click', hideModal);
     modalCancel.addEventListener('click', hideModal);
     modalSave.addEventListener('click', saveTemplate);
     
-    // Wire up RAG store modal event listeners
-    ragModalClose.addEventListener('click', hideRagStoreModal);
-    ragModalCancel.addEventListener('click', hideRagStoreModal);
-    ragModalSave.addEventListener('click', saveRagStore);
-    
     // Close modal when clicking outside
     templateModal.addEventListener('click', (e) => {
         if (e.target === templateModal) {
             hideModal();
-        }
-    });
-    
-    // Close RAG store modal when clicking outside
-    ragStoreModal.addEventListener('click', (e) => {
-        if (e.target === ragStoreModal) {
-            hideRagStoreModal();
         }
     });
     
@@ -282,21 +174,6 @@ async function initializeApp() {
         if (e.key === 'Enter' && e.ctrlKey) {
             e.preventDefault();
             saveTemplate();
-        }
-    });
-    
-    // Handle Enter key in RAG store modal
-    ragStoreNameInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            ragStoreIdInput.focus();
-        }
-    });
-    
-    ragStoreIdInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            saveRagStore();
         }
     });
     
@@ -391,11 +268,6 @@ ipcRenderer.on('llm-clipboard-updated', () => {
     updateLlmClipboardStatus();
 });
 
-// Enhanced: Recording progress listener
-ipcRenderer.on('recording-progress', (event, progressData) => {
-    updateRecordingProgress(progressData);
-});
-
 // Helper functions
 function showStatus(status, type = 'ready') {
     // Add visual cues for different states
@@ -403,67 +275,49 @@ function showStatus(status, type = 'ready') {
         statusText.textContent = status + ' - Speak now!';
         statusText.style.color = '#ff3b30';
         statusText.style.fontWeight = 'bold';
-        // Enhanced: Show recording indicator with progress
+        // Show prominent recording indicator
         if (recordingIndicator) {
             recordingIndicator.style.display = 'flex';
-        }
-        if (recordingProgressContainer) {
-            recordingProgressContainer.style.display = 'block';
         }
     } else if (status.toLowerCase().includes('transcribing')) {
         statusText.textContent = '📝 ' + status;
         statusText.style.color = '#007aff';
         statusText.style.fontWeight = 'normal';
-        // Enhanced: Hide recording indicator and progress
+        // Hide recording indicator
         if (recordingIndicator) {
             recordingIndicator.style.display = 'none';
-        }
-        if (recordingProgressContainer) {
-            recordingProgressContainer.style.display = 'none';
         }
     } else if (status.toLowerCase().includes('thinking')) {
         statusText.textContent = '🤔 ' + status;
         statusText.style.color = '#28a745';
         statusText.style.fontWeight = 'normal';
-        // Enhanced: Hide recording indicator and progress
+        // Hide recording indicator
         if (recordingIndicator) {
             recordingIndicator.style.display = 'none';
-        }
-        if (recordingProgressContainer) {
-            recordingProgressContainer.style.display = 'none';
         }
     } else if (status.toLowerCase().includes('done')) {
         statusText.textContent = '✅ ' + status;
         statusText.style.color = '#28a745';
         statusText.style.fontWeight = 'normal';
-        // Enhanced: Hide recording indicator and progress
+        // Hide recording indicator
         if (recordingIndicator) {
             recordingIndicator.style.display = 'none';
-        }
-        if (recordingProgressContainer) {
-            recordingProgressContainer.style.display = 'none';
         }
     } else if (status.toLowerCase().includes('error')) {
         statusText.textContent = '❌ ' + status;
         statusText.style.color = '#dc3545';
         statusText.style.fontWeight = 'normal';
-        // Enhanced: Hide recording indicator and progress
+        // Hide recording indicator
         if (recordingIndicator) {
             recordingIndicator.style.display = 'none';
-        }
-        if (recordingProgressContainer) {
-            recordingProgressContainer.style.display = 'none';
         }
     } else {
         statusText.textContent = status;
         statusText.style.color = '#495057';
         statusText.style.fontWeight = 'normal';
-        // Enhanced: Hide recording indicator and progress for non-listening states
+        // Hide recording indicator for non-listening states
         if (recordingIndicator) {
             recordingIndicator.style.display = 'none';
-        }
-        if (recordingProgressContainer) {
-            recordingProgressContainer.style.display = 'none';
         }
     }
     
@@ -483,43 +337,6 @@ function showStatus(status, type = 'ready') {
         statusIndicator.classList.add('error');
     } else if (status.toLowerCase().includes('testing')) {
         statusIndicator.classList.add('testing');
-    }
-}
-
-// Enhanced: Recording progress update function
-function updateRecordingProgress(progressData) {
-    if (!progressData || !recordingProgressFill || !recordingElapsed || !recordingRemaining) {
-        return;
-    }
-    
-    const { elapsed, progress, remaining } = progressData;
-    
-    // Update progress bar
-    recordingProgressFill.style.width = `${Math.min(progress, 100)}%`;
-    
-    // Format time display
-    const formatTime = (ms) => {
-        const seconds = Math.floor(ms / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = seconds % 60;
-        
-        if (minutes > 0) {
-            return `${minutes}m ${remainingSeconds}s`;
-        }
-        return `${remainingSeconds}s`;
-    };
-    
-    // Update time displays
-    recordingElapsed.textContent = formatTime(elapsed);
-    recordingRemaining.textContent = formatTime(remaining);
-    
-    // Change color when approaching limit
-    if (progress > 80) {
-        recordingProgressFill.style.background = 'linear-gradient(90deg, #FF6B6B, #FF8E53)';
-    } else if (progress > 60) {
-        recordingProgressFill.style.background = 'linear-gradient(90deg, #FFD93D, #FF6B6B)';
-    } else {
-        recordingProgressFill.style.background = 'linear-gradient(90deg, #4CAF50, #8BC34A)';
     }
 }
 
@@ -553,44 +370,31 @@ function displayResponse(response) {
     }
 }
 
-async function saveSettings() {
-    try {
-        await ipcRenderer.invoke('save-model', modelSelect.value);
-        await ipcRenderer.invoke('save-temperature', parseFloat(temperatureSlider.value));
-        await ipcRenderer.invoke('save-max-tokens', parseInt(maxTokensInput.value));
-    } catch (error) {
-        console.error('Error saving settings:', error);
-    }
+function saveSettings() {
+    const settings = {
+        model: modelSelect.value,
+        temperature: parseFloat(temperatureSlider.value),
+        maxTokens: parseInt(maxTokensInput.value)
+    };
+    
+    localStorage.setItem('voiceToLLMSettings', JSON.stringify(settings));
 }
 
-async function loadSettings() {
+function loadSettings() {
     try {
-        // Load existing settings
-        const autoPasteEnabled = await ipcRenderer.invoke('get-auto-paste');
-        const llmShortcutsEnabledValue = await ipcRenderer.invoke('get-llm-shortcuts-enabled');
-        
-        // Load Copy Send setting
-        const copySendEnabled = await ipcRenderer.invoke('get-copy-send');
-        
-        // Apply settings to UI
-        autoPasteCheckbox.checked = autoPasteEnabled;
-        llmShortcutsEnabled.checked = llmShortcutsEnabledValue;
-        copySendCheckbox.checked = copySendEnabled;
-        
-        // Load other settings
-        const model = await ipcRenderer.invoke('get-model');
-        const temperature = await ipcRenderer.invoke('get-temperature');
-        const maxTokens = await ipcRenderer.invoke('get-max-tokens');
-        
-        if (model) modelSelect.value = model;
-        if (temperature) {
-            temperatureSlider.value = temperature;
-            temperatureValue.textContent = temperature;
+        const savedSettings = localStorage.getItem('voiceToLLMSettings');
+        if (savedSettings) {
+            const settings = JSON.parse(savedSettings);
+            
+            if (settings.model) modelSelect.value = settings.model;
+            if (settings.temperature) {
+                temperatureSlider.value = settings.temperature;
+                temperatureValue.textContent = settings.temperature;
+            }
+            if (settings.maxTokens) maxTokensInput.value = settings.maxTokens;
         }
-        if (maxTokens) maxTokensInput.value = maxTokens;
-        
     } catch (error) {
-        console.error('Error loading settings:', error);
+        // console.error('Error loading settings:', error);
     }
 }
 
@@ -609,42 +413,23 @@ ipcRenderer.on('start-recording', async () => {
         
         // console.log('Requesting microphone access...');
         
-        // Enhanced audio constraints optimized for Whisper API
+        // Try with audio constraints compatible with MediaRecorder
         let stream;
         try {
-            // Primary: Whisper-optimized audio constraints
             stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
-                    autoGainControl: true,        // Enhanced: Auto-gain control
-                    channelCount: 1,              // Mono (optimal for speech)
-                    sampleRate: 16000,            // Enhanced: 16kHz (Whisper optimal)
-                    sampleSize: 16                // Enhanced: 16-bit depth
+                    channelCount: 1
+                    // Note: sampleRate and sampleSize are not supported by getUserMedia
                 } 
             });
-            console.log('✅ Using Whisper-optimized audio constraints (16kHz/16-bit/mono)');
         } catch (error) {
-            console.log('⚠️ Whisper-optimized constraints failed, trying standard constraints...');
-            try {
-                // Fallback: Standard enhanced constraints
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                        channelCount: 1
-                    }
-                });
-                console.log('✅ Using standard enhanced audio constraints');
-            } catch (fallbackError) {
-                console.log('⚠️ Enhanced constraints failed, using basic audio...');
-                // Final fallback: Basic audio constraints
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: true
-                });
-                console.log('✅ Using basic audio constraints');
-            }
+            // console.log('Failed with advanced constraints, trying basic audio...');
+            // Fallback to basic audio constraints
+            stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: true
+            });
         }
         // console.log('Microphone access granted, stream tracks:', stream.getTracks().length);
         
@@ -858,62 +643,29 @@ function addTooltips() {
 document.addEventListener('DOMContentLoaded', addTooltips);
 // --- Instruction Templates & Auto-Paste Integration ---
 function renderTemplateOptions() {
-    // Remove existing user template options
     Array.from(templateSelect.options).forEach(opt => {
         if (opt.dataset.userTemplate) {
             templateSelect.remove(opt.index);
         }
     });
-    
-    // Add custom templates with icon and styling
     userTemplates.forEach(t => {
-        const opt = new Option(`👤 ${t.name}`, t.id);
+        const opt = new Option(t.name, t.id);
         opt.dataset.userTemplate = 'true';
-        opt.className = 'custom-template-option';
         templateSelect.add(opt);
     });
-    
-    // Update built-in template options with icons if not already done
-    const builtInOptions = Array.from(templateSelect.options).filter(opt => !opt.dataset.userTemplate && opt.value !== '');
-    builtInOptions.forEach(opt => {
-        if (!opt.text.startsWith('⚙️')) {
-            opt.text = `⚙️ ${opt.text}`;
-            opt.className = 'system-template-option';
-        }
-    });
-    
-    // Update the first option (Custom instruction) with icon
-    const firstOption = templateSelect.options[0];
-    if (firstOption && firstOption.value === '' && !firstOption.text.startsWith('🔧')) {
-        firstOption.text = '🔧 Custom instruction...';
-        firstOption.className = 'custom-instruction-option';
-    }
 }
 
 function onTemplateSelect(e) {
     const val = e.target.value;
     let text = '';
-    let template = null;
-    
     if (promptTemplates[val]) {
         text = promptTemplates[val];
-        // Built-in templates don't have RAG functionality
-        currentTemplate = null;
     } else {
-        template = userTemplates.find(t => t.id === val);
-        if (template) {
-            text = template.content;
-            currentTemplate = template;
-        } else {
-            currentTemplate = null;
-        }
+        const tpl = userTemplates.find(t => t.id === val);
+        if (tpl) text = tpl.content;
     }
-    
     instructionInput.value = text;
     localStorage.setItem('lastInstruction', text);
-    
-    // Update RAG UI based on selected template
-    updateRagUI();
 }
 
 // Modal functions
@@ -950,26 +702,11 @@ async function saveTemplate() {
         // Edit existing template
         currentEditingTemplate.name = name;
         currentEditingTemplate.content = content;
-        // Preserve existing RAG settings when editing
-        if (!currentEditingTemplate.ragSearch) {
-            currentEditingTemplate.ragSearch = false;
-        }
-        if (!currentEditingTemplate.ragAssociations) {
-            currentEditingTemplate.ragAssociations = [];
-        }
     } else {
-        // Add new template with RAG fields
+        // Add new template
         const id = Date.now().toString();
-        userTemplates.push({ 
-            id, 
-            name, 
-            content,
-            ragSearch: false,
-            ragAssociations: []
-        });
+        userTemplates.push({ id, name, content });
     }
-    // Update global reference
-    window.userTemplates = userTemplates;
     
     await ipcRenderer.invoke('save-instruction-templates', userTemplates);
     renderTemplateOptions();
@@ -1009,8 +746,6 @@ async function deleteTemplate() {
     }
     if (!confirm('Delete this template?')) return;
     userTemplates = userTemplates.filter(t => t.id !== val);
-    // Update global reference
-    window.userTemplates = userTemplates;
     await ipcRenderer.invoke('save-instruction-templates', userTemplates);
     renderTemplateOptions();
     templateSelect.value = '';
@@ -1044,8 +779,6 @@ async function importTemplates() {
         if (result.success) {
             // Reload templates from storage
             userTemplates = await ipcRenderer.invoke('get-instruction-templates');
-            // Update global reference
-            window.userTemplates = userTemplates;
             renderTemplateOptions();
             
             showStatus(`Successfully imported ${result.importedCount} templates (${result.totalCount} total)`, 'success');
@@ -1060,183 +793,6 @@ async function importTemplates() {
     }
 }
 
-// RAG Store Functions
-function renderRagStoreOptions() {
-    // Clear existing options except the default
-    ragStoreSelect.innerHTML = '<option value="">Select RAG Store...</option>';
-    
-    // Add user RAG stores
-    ragStores.forEach(store => {
-        const option = document.createElement('option');
-        option.value = store.id;
-        option.textContent = store.name;
-        ragStoreSelect.appendChild(option);
-    });
-}
-
-function onRagStoreSelect(e) {
-    const selectedValue = e.target.value;
-    console.log('RAG Store selected:', selectedValue);
-    
-    if (selectedValue && ragStores.length > 0) {
-        const selectedStore = ragStores.find(store => store.id === selectedValue);
-        if (selectedStore) {
-            console.log('Selected RAG Store:', selectedStore);
-        }
-    }
-}
-
-async function saveRagStore() {
-    const name = ragStoreNameInput.value.trim();
-    const vectorStoreId = ragStoreIdInput.value.trim();
-    
-    if (!name) {
-        alert('Please enter a RAG store name');
-        return;
-    }
-    
-    if (!vectorStoreId) {
-        alert('Please enter a Vector Store ID');
-        return;
-    }
-    
-    // Check for duplicate names (excluding current editing store)
-    const duplicateName = ragStores.find(store => 
-        store.name.toLowerCase() === name.toLowerCase() && 
-        (!currentEditingRagStore || store.id !== currentEditingRagStore.id)
-    );
-    if (duplicateName) {
-        alert('A RAG store with this name already exists. Please choose a different name.');
-        return;
-    }
-    
-    // Check for duplicate Vector Store IDs (excluding current editing store)
-    const duplicateId = ragStores.find(store => 
-        store.vectorStoreId === vectorStoreId && 
-        (!currentEditingRagStore || store.id !== currentEditingRagStore.id)
-    );
-    if (duplicateId) {
-        alert('A RAG store with this Vector Store ID already exists. Please choose a different ID.');
-        return;
-    }
-    
-    if (currentEditingRagStore) {
-        // Edit existing RAG store
-        currentEditingRagStore.name = name;
-        currentEditingRagStore.vectorStoreId = vectorStoreId;
-    } else {
-        // Add new RAG store
-        const id = Date.now().toString();
-        ragStores.push({ id, name, vectorStoreId });
-    }
-    
-    // Update global reference
-    window.ragStores = ragStores;
-    
-    await ipcRenderer.invoke('save-rag-stores', ragStores);
-    renderRagStoreOptions();
-    hideRagStoreModal();
-    
-    // Select the new/edited RAG store
-    if (!currentEditingRagStore) {
-        const newStore = ragStores[ragStores.length - 1];
-        ragStoreSelect.value = newStore.id;
-        onRagStoreSelect({ target: ragStoreSelect });
-    }
-}
-
-function addRagStore() {
-    console.log('ADD RAG STORE CLICKED!');
-    currentEditingRagStore = null;
-    showRagStoreModal('Add RAG Store', '', '');
-}
-
-function editRagStore() {
-    const val = ragStoreSelect.value;
-    const store = ragStores.find(s => s.id === val);
-    if (!store) {
-        alert('Select a RAG store to edit');
-        return;
-    }
-    currentEditingRagStore = store;
-    showRagStoreModal('Edit RAG Store', store.name, store.vectorStoreId);
-}
-
-async function deleteRagStore() {
-    const val = ragStoreSelect.value;
-    const store = ragStores.find(s => s.id === val);
-    if (!store) {
-        alert('Select a RAG store to delete');
-        return;
-    }
-    if (!confirm(`Delete RAG store "${store.name}"?`)) return;
-    
-    ragStores = ragStores.filter(s => s.id !== val);
-    // Update global reference
-    window.ragStores = ragStores;
-    await ipcRenderer.invoke('save-rag-stores', ragStores);
-    renderRagStoreOptions();
-    ragStoreSelect.value = '';
-    onRagStoreSelect({ target: ragStoreSelect });
-}
-
-async function exportRagStores() {
-    try {
-        showStatus('Exporting RAG stores...', 'info');
-        const result = await ipcRenderer.invoke('export-rag-stores');
-        
-        if (result.success) {
-            showStatus(`RAG stores exported to: ${result.filePath}`, 'success');
-            setTimeout(() => showStatus('Ready'), 3000);
-        } else {
-            showStatus(`Export failed: ${result.error}`, 'error');
-            setTimeout(() => showStatus('Ready'), 3000);
-        }
-    } catch (error) {
-        showStatus(`Export error: ${error.message}`, 'error');
-        setTimeout(() => showStatus('Ready'), 3000);
-    }
-}
-
-async function importRagStores() {
-    try {
-        showStatus('Importing RAG stores...', 'info');
-        const result = await ipcRenderer.invoke('import-rag-stores');
-        
-        if (result.success) {
-            // Reload RAG stores from storage
-            ragStores = await ipcRenderer.invoke('get-rag-stores');
-            // Update global reference
-            window.ragStores = ragStores;
-            renderRagStoreOptions();
-            
-            showStatus(`Successfully imported ${result.importedCount} RAG stores (${result.totalCount} total)`, 'success');
-            setTimeout(() => showStatus('Ready'), 3000);
-        } else {
-            showStatus(`Import failed: ${result.error}`, 'error');
-            setTimeout(() => showStatus('Ready'), 3000);
-        }
-    } catch (error) {
-        showStatus(`Import error: ${error.message}`, 'error');
-        setTimeout(() => showStatus('Ready'), 3000);
-    }
-}
-
-function showRagStoreModal(title, name = '', vectorStoreId = '') {
-    ragModalTitle.textContent = title;
-    ragStoreNameInput.value = name;
-    ragStoreIdInput.value = vectorStoreId;
-    ragStoreModal.style.display = 'block';
-    ragStoreNameInput.focus();
-}
-
-function hideRagStoreModal() {
-    ragStoreModal.style.display = 'none';
-    currentEditingRagStore = null;
-    ragStoreNameInput.value = '';
-    ragStoreIdInput.value = '';
-}
-
 // LLM Clipboard Functions
 async function updateLlmClipboardStatus() {
     try {
@@ -1246,13 +802,10 @@ async function updateLlmClipboardStatus() {
             const timestamp = new Date(clipboard.timestamp).toLocaleString();
             llmClipboardText.textContent = `${charCount} characters (${timestamp})`;
             llmClipboardStatus.style.color = '#28a745';
-            llmClipboardPreview.style.display = 'block'; // Always show preview
-            llmClipboardContent.textContent = clipboard.text;
         } else {
             llmClipboardText.textContent = 'No content in LLM clipboard';
             llmClipboardStatus.style.color = '#6c757d';
-            llmClipboardPreview.style.display = 'block'; // Always show preview area
-            llmClipboardContent.textContent = 'No content available';
+            llmClipboardPreview.style.display = 'none';
         }
     } catch (error) {
         console.error('Error updating LLM clipboard status:', error);
@@ -1270,252 +823,24 @@ async function clearLlmClipboardContent() {
     }
 }
 
-// Function to show/hide Copy Send loading indicator
-function showCopySendLoading(show) {
-    if (copySendLoadingIndicator) {
-        copySendLoadingIndicator.style.display = show ? 'inline-block' : 'none';
-    }
-}
-
-// RAG Search Functions
-function updateRagUI() {
-    // Show/hide RAG container based on template type
-    const ragContainer = document.querySelector('.rag-search-container');
-    
-    if (!currentTemplate) {
-        // Built-in template or no template selected - hide RAG functionality
-        ragContainer.style.display = 'none';
-        return;
-    }
-    
-    // User template selected - show RAG functionality
-    ragContainer.style.display = 'block';
-    
-    // Update checkbox state
-    ragSearchCheckbox.checked = currentTemplate.ragSearch || false;
-    
-    // Show/hide associations section
-    onRagSearchToggle();
-    
-    // Render associations
-    renderRagAssociations();
-}
-
-function onRagSearchToggle() {
-    const isChecked = ragSearchCheckbox.checked;
-    
-    // Show/hide associations section
-    ragAssociationsSection.style.display = isChecked ? 'block' : 'none';
-    
-    // Update current template if available
-    if (currentTemplate) {
-        currentTemplate.ragSearch = isChecked;
-        saveCurrentTemplate();
-    }
-    
-    // Update button state based on new checkbox state
-    updateAddButtonState();
-}
-
-function renderRagAssociations() {
-    if (!currentTemplate || !currentTemplate.ragAssociations) {
-        ragAssociationsList.innerHTML = '<div class="rag-empty-state">No RAG associations configured</div>';
-        updateAddButtonState();
-        return;
-    }
-    
-    if (currentTemplate.ragAssociations.length === 0) {
-        ragAssociationsList.innerHTML = '<div class="rag-empty-state">No RAG associations configured</div>';
-        updateAddButtonState();
-        return;
-    }
-    
-    // Render each association
-    ragAssociationsList.innerHTML = currentTemplate.ragAssociations.map((assoc, index) => {
-        const ragStore = ragStores.find(store => store.id === assoc.ragStoreId);
-        const ragStoreName = ragStore ? ragStore.name : 'Unknown RAG Store';
+async function toggleLlmClipboardPreview() {
+    try {
+        const clipboard = await ipcRenderer.invoke('get-llm-clipboard');
+        if (!clipboard || !clipboard.text) {
+            alert('LLM clipboard is empty');
+            return;
+        }
         
-        return `
-            <div class="rag-association-item" data-index="${index}">
-                <div class="rag-association-header">
-                    <div class="rag-association-name">${ragStoreName}</div>
-                    <button class="rag-association-remove" onclick="removeRagAssociation(${index})">Remove</button>
-                </div>
-                <div class="rag-association-controls">
-                    <div class="rag-control-group">
-                        <label>Max Results (1-20):</label>
-                        <input type="number" class="rag-control-input" min="1" max="20" 
-                               value="${assoc.maxResults || 8}" 
-                               onchange="updateRagAssociation(${index}, 'maxResults', this.value)">
-                    </div>
-                    <div class="rag-control-group">
-                        <div class="rag-control-checkbox">
-                            <input type="checkbox" 
-                                   ${assoc.includeResults ? 'checked' : ''} 
-                                   onchange="updateRagAssociation(${index}, 'includeResults', this.checked)">
-                            <label>Include results in response</label>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-    
-    // Update add button state
-    updateAddButtonState();
-}
-
-function updateAddButtonState() {
-    const maxAssociations = 5;
-    
-    if (!currentTemplate) {
-        // No template selected - disable button
-        addRagAssociationBtn.disabled = true;
-        addRagAssociationBtn.textContent = 'Add RAG Association (0/5)';
-        return;
-    }
-    
-    if (!currentTemplate.ragSearch) {
-        // RAG search disabled - disable button
-        addRagAssociationBtn.disabled = true;
-        addRagAssociationBtn.textContent = 'Add RAG Association (0/5)';
-        return;
-    }
-    
-    const currentCount = currentTemplate.ragAssociations?.length || 0;
-    addRagAssociationBtn.disabled = currentCount >= maxAssociations;
-    addRagAssociationBtn.textContent = currentCount >= maxAssociations ? 
-        'Max Associations (5)' : `Add RAG Association (${currentCount}/5)`;
-}
-
-function addRagAssociation() {
-    if (!currentTemplate) return;
-    
-    // Check if we have RAG stores available
-    if (ragStores.length === 0) {
-        alert('No RAG stores available. Please create a RAG store first.');
-        return;
-    }
-    
-    // Check max associations limit
-    if (currentTemplate.ragAssociations.length >= 5) {
-        alert('Maximum of 5 RAG associations allowed per template.');
-        return;
-    }
-    
-    // Show selection modal
-    showRagAssociationModal();
-}
-
-function showRagAssociationModal() {
-    // Create modal HTML
-    const modalHTML = `
-        <div class="rag-association-modal" id="ragAssociationModal">
-            <div class="rag-association-modal-content">
-                <div class="rag-association-modal-header">
-                    <h3>Add RAG Association</h3>
-                    <span class="rag-association-modal-close" onclick="hideRagAssociationModal()">&times;</span>
-                </div>
-                <div class="rag-association-modal-body">
-                    <div class="form-group">
-                        <label for="ragAssociationSelect">Select RAG Store:</label>
-                        <select id="ragAssociationSelect" class="modal-input">
-                            <option value="">Choose a RAG store...</option>
-                            ${ragStores.map(store => `<option value="${store.id}">${store.name}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="ragAssociationMaxResults">Max Results (1-20):</label>
-                        <input type="number" id="ragAssociationMaxResults" class="modal-input" min="1" max="20" value="8">
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="ragAssociationIncludeResults" checked>
-                            Include search results in response
-                        </label>
-                    </div>
-                </div>
-                <div class="rag-association-modal-footer">
-                    <button onclick="saveRagAssociation()" class="btn btn-primary">Add</button>
-                    <button onclick="hideRagAssociationModal()" class="btn btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    // Add modal to page
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-}
-
-function hideRagAssociationModal() {
-    const modal = document.getElementById('ragAssociationModal');
-    if (modal) {
-        modal.remove();
-    }
-}
-
-function saveRagAssociation() {
-    const select = document.getElementById('ragAssociationSelect');
-    const maxResults = document.getElementById('ragAssociationMaxResults');
-    const includeResults = document.getElementById('ragAssociationIncludeResults');
-    
-    if (!select.value) {
-        alert('Please select a RAG store.');
-        return;
-    }
-    
-    // Check for duplicates
-    const isDuplicate = currentTemplate.ragAssociations.some(assoc => assoc.ragStoreId === select.value);
-    if (isDuplicate) {
-        alert('This RAG store is already associated with this template.');
-        return;
-    }
-    
-    // Add new association
-    const newAssociation = {
-        ragStoreId: select.value,
-        maxResults: parseInt(maxResults.value) || 8,
-        includeResults: includeResults.checked
-    };
-    
-    currentTemplate.ragAssociations.push(newAssociation);
-    saveCurrentTemplate();
-    renderRagAssociations();
-    hideRagAssociationModal();
-}
-
-function removeRagAssociation(index) {
-    if (!currentTemplate || !currentTemplate.ragAssociations) return;
-    
-    if (confirm('Remove this RAG association?')) {
-        currentTemplate.ragAssociations.splice(index, 1);
-        saveCurrentTemplate();
-        renderRagAssociations();
-    }
-}
-
-function updateRagAssociation(index, field, value) {
-    if (!currentTemplate || !currentTemplate.ragAssociations[index]) return;
-    
-    if (field === 'maxResults') {
-        value = parseInt(value);
-        if (value < 1) value = 1;
-        if (value > 20) value = 20;
-    }
-    
-    currentTemplate.ragAssociations[index][field] = value;
-    saveCurrentTemplate();
-}
-
-async function saveCurrentTemplate() {
-    if (!currentTemplate) return;
-    
-    // Update the template in the array
-    const index = userTemplates.findIndex(t => t.id === currentTemplate.id);
-    if (index !== -1) {
-        userTemplates[index] = currentTemplate;
-        window.userTemplates = userTemplates;
-        await ipcRenderer.invoke('save-instruction-templates', userTemplates);
+        if (llmClipboardPreview.style.display === 'none') {
+            llmClipboardContent.textContent = clipboard.text;
+            llmClipboardPreview.style.display = 'block';
+            previewLlmClipboard.textContent = 'Hide';
+        } else {
+            llmClipboardPreview.style.display = 'none';
+            previewLlmClipboard.textContent = 'Preview';
+        }
+    } catch (error) {
+        console.error('Error toggling preview:', error);
     }
 }
 
