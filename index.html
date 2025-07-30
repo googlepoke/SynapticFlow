@@ -220,8 +220,13 @@
                         </div>
                     </div>
                     <div class="setting-item">
-                        <label for="llmShortcutsEnabled">Enable LLM Shortcuts:</label>
-                        <input type="checkbox" id="llmShortcutsEnabled" class="setting-checkbox" checked>
+                        <label for="llmShortcutsEnabled">Enable Ctrl+C/V Shortcuts:</label>
+                        <div class="toggle-switch-container">
+                            <input type="checkbox" id="llmShortcutsEnabled" class="toggle-switch-input" checked title="Enable/disable Ctrl+C processing shortcut">
+                            <label for="llmShortcutsEnabled" class="toggle-switch-label">
+                                <span class="toggle-switch-slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <div class="setting-item copy-send-container">
                         <label for="copySendCheckbox">
