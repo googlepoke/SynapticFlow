@@ -44,6 +44,7 @@
                         <option value="bullet" class="system-template-option">⚙️ Bullet Points</option>
                         <option value="question" class="system-template-option">⚙️ Generate Questions</option>
                         <option value="action" class="system-template-option">⚙️ Extract Action Items</option>
+                        
                     </select>
                     <button id="addTemplateBtn" class="btn btn-small">Add</button>
                     <button id="editTemplateBtn" class="btn btn-small">Edit</button>
@@ -67,6 +68,22 @@
                             <!-- Dynamic RAG associations will be added here -->
                         </div>
                         <button id="addRagAssociationBtn" class="btn btn-small">Add RAG Association</button>
+                    </div>
+                </div>
+                
+                <!-- NEW: Web Search Section -->
+                <div class="web-search-container" style="display: none;">
+                    <div class="web-search-checkbox">
+                        <input type="checkbox" id="webSearchCheckbox" class="web-search-checkbox-input">
+                        <label for="webSearchCheckbox" class="web-search-label">🌐 Web Search</label>
+                    </div>
+                    
+                    <!-- Web Search Options Section (hidden by default) -->
+                    <div id="webSearchOptionsSection" class="web-search-options-section" style="display: none;">
+                        <div class="web-search-option">
+                            <label>Maximum results: <span id="webSearchResultsValue">5</span></label>
+                            <input type="range" id="webSearchResultsSlider" min="1" max="10" value="5" class="setting-slider">
+                        </div>
                     </div>
                 </div>
             </section>
@@ -130,6 +147,30 @@
                     <button id="exportRagStoresBtn" class="btn btn-small">Export</button>
                     <button id="importRagStoresBtn" class="btn btn-small">Import</button>
                 </div>
+                
+                <!-- RAG Testing Section -->
+                <div class="rag-testing-section" style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                    <h4>🧪 Test RAG Functionality</h4>
+                    <div class="rag-test-input">
+                        <input type="text" id="ragTestQuery" placeholder="Enter test query for RAG..." class="modal-input" style="margin-bottom: 10px;">
+                        <div class="rag-test-controls" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <label for="maxResultsSelect" style="font-size: 0.9em; color: #666;">Max Results:</label>
+                            <input type="number" id="maxResultsSelect" min="1" max="50" step="1" value="5" 
+                                   style="padding: 5px; border: 1px solid #ddd; border-radius: 3px; font-size: 0.9em; width: 80px;" 
+                                   title="Enter a value between 1 and 50"
+                                   oninput="validateMaxResults(this)"
+                                   onblur="correctMaxResults(this)">
+                        </div>
+                        <div class="rag-test-buttons">
+                            <button id="testDirectSearchBtn" class="btn btn-small">Direct Search</button>
+                            <button id="testRagQueryBtn" class="btn btn-small">RAG Query</button>
+                        </div>
+                    </div>
+                    <div id="ragTestResults" class="rag-test-results" style="margin-top: 10px; display: none;">
+                        <h5>Results:</h5>
+                        <div id="ragTestContent" style="max-height: 300px; overflow-y: auto; background: white; padding: 10px; border-radius: 3px; border: 1px solid #ddd;"></div>
+                    </div>
+                </div>
             </section>
 
             <section class="settings-section">
@@ -138,13 +179,27 @@
                     <div class="setting-item">
                         <label for="modelSelect">Model:</label>
                         <select id="modelSelect" class="setting-select">
-                            <option value="gpt-4o">GPT-4o</option>
-                            <option value="gpt-4">GPT-4</option>
-                            <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                            <!-- OpenAI Models (Most → Least Expensive) -->
+                            <option value="gpt-4-preview">GPT-4.5 Preview (Premium/Research only - Best for complex reasoning)</option>
+                            <option value="gpt-4o">GPT-4o (Best balance - Multimodal capabilities)</option>
+                            <option value="gpt-4.1">GPT-4.1 (Coding specialist - Large context window)</option>
+                            <option value="gpt-4.1-mini">GPT-4.1 Mini (Great middle option - Balanced performance)</option>
+                            <option value="gpt-4o-mini" selected>GPT-4o Mini (Excellent value - Best for most tasks)</option>
+                            <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Budget option - Fast and reliable)</option>
+                            <option value="gpt-4.1-nano">GPT-4.1 Nano (Cheapest OpenAI - Ultra budget)</option>
+                            
+                            <!-- Non-OpenAI Models -->
                             <option value="Claude-3.5-Sonnet">Claude-3.5-Sonnet</option>
                             <option value="DeepSeek-R1">DeepSeek-R1</option>
                             <option value="Meta-Llama-3.1-8B-Instruct">Meta-Llama-3.1-8B-Instruct</option>
                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="useResponsesAPICheckbox">
+                            🧪 Use Responses API (Beta):
+                            <span class="setting-tooltip" title="Use OpenAI's newer Responses API for better RAG performance. Switch back to Chat Completions API if you encounter issues.">ℹ️</span>
+                        </label>
+                        <input type="checkbox" id="useResponsesAPICheckbox" class="setting-checkbox">
                     </div>
                     <div class="setting-item">
                         <label for="temperatureSlider">Temperature:</label>
@@ -157,7 +212,12 @@
                     </div>
                     <div class="setting-item">
                         <label for="autoPasteCheckbox">Auto-Paste:</label>
-                        <input type="checkbox" id="autoPasteCheckbox" class="setting-checkbox" checked>
+                        <div class="toggle-switch-container">
+                            <input type="checkbox" id="autoPasteCheckbox" class="toggle-switch-input" checked>
+                            <label for="autoPasteCheckbox" class="toggle-switch-label">
+                                <span class="toggle-switch-slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <div class="setting-item">
                         <label for="llmShortcutsEnabled">Enable LLM Shortcuts:</label>
@@ -200,6 +260,28 @@
                         <label for="templateContentInput">Template Content:</label>
                         <textarea id="templateContentInput" class="modal-textarea" placeholder="Enter template content" rows="6"></textarea>
                     </div>
+                    
+                    <!-- NEW: Web Search Configuration Section -->
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="templateWebSearchCheckbox">
+                            🌐 Enable Web Search for this template
+                        </label>
+                    </div>
+
+                    <div id="webSearchConfigSection" style="display: none; margin-left: 20px; padding: 15px; background: rgba(0,0,0,0.05); border-radius: 8px; border: 1px solid #dee2e6;">
+                        <div class="form-group">
+                            <label for="webSearchMaxResults">Maximum search results (1-10):</label>
+                            <input type="number" id="webSearchMaxResults" min="1" max="10" value="5" class="modal-input">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="webSearchIncludeResults" checked>
+                                Include search results in the AI response
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button id="modalSave" class="btn btn-primary">Save</button>
@@ -220,9 +302,45 @@
                         <label for="ragStoreNameInput">RAG Store Name:</label>
                         <input type="text" id="ragStoreNameInput" class="modal-input" placeholder="Enter RAG store name (max 100 chars)" maxlength="100">
                     </div>
-                    <div class="form-group">
+                    
+                    <!-- Upload Mode Toggle -->
+                    <div class="upload-mode-toggle">
+                        <input type="checkbox" id="uploadModeCheckbox" class="setting-checkbox">
+                        <label for="uploadModeCheckbox">Upload file to create new vector store</label>
+                    </div>
+                    
+                    <!-- File Upload Section (hidden by default) -->
+                    <div id="fileUploadSection" class="form-group" style="display: none;">
+                        <label for="fileUploadInput">Upload File:</label>
+                        <div class="file-upload-container" id="fileUploadContainer">
+                            <input type="file" id="fileUploadInput" class="file-input" accept=".txt,.pdf,.doc,.docx,.md,.json,.csv">
+                            <div class="file-upload-dropzone">
+                                <div>📁 Click to browse or drag & drop your file here</div>
+                                <div class="file-upload-info">
+                                    <span id="selectedFileName">No file selected</span>
+                                    <button type="button" id="browseFileBtn" class="btn btn-small">Browse</button>
+                                </div>
+                            </div>
+                        </div>
+                        <small class="file-help-text">Supported formats: TXT, PDF, DOC, DOCX, MD, JSON, CSV (Max 20MB)</small>
+                        
+                        <!-- Upload Progress -->
+                        <div id="uploadProgressContainer" class="upload-progress-container" style="display: none;">
+                            <div class="upload-progress-bar">
+                                <div class="upload-progress-fill" id="uploadProgressFill" style="width: 0%"></div>
+                            </div>
+                            <div class="upload-status">
+                                <span id="uploadStatusText">Preparing upload...</span>
+                                <span id="uploadPercentage">0%</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Vector Store ID Section (shown by default) -->
+                    <div id="vectorStoreIdSection" class="form-group">
                         <label for="ragStoreIdInput">Vector Store ID:</label>
                         <input type="text" id="ragStoreIdInput" class="modal-input" placeholder="Enter OpenAI Vector Store ID (max 100 chars)" maxlength="100">
+                        <small class="help-text">Enter existing OpenAI Vector Store ID</small>
                     </div>
                 </div>
                 <div class="modal-footer">

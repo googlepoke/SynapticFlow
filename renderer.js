@@ -34,6 +34,8 @@ const llmShortcutsEnabled = document.getElementById('llmShortcutsEnabled');
 // Add new DOM element for Copy Send
 const copySendCheckbox = document.getElementById('copySendCheckbox');
 const copySendLoadingIndicator = document.getElementById('copySendLoadingIndicator');
+// Add new DOM element for Responses API
+const useResponsesAPICheckbox = document.getElementById('useResponsesAPICheckbox');
 // Enhanced: Recording progress elements
 const recordingProgressContainer = document.getElementById('recordingProgressContainer');
 const recordingProgressFill = document.getElementById('recordingProgressFill');
@@ -62,11 +64,43 @@ const ragStoreNameInput = document.getElementById('ragStoreNameInput');
 const ragStoreIdInput = document.getElementById('ragStoreIdInput');
 const ragModalSave = document.getElementById('ragModalSave');
 const ragModalCancel = document.getElementById('ragModalCancel');
+// RAG Testing elements
+const ragTestQuery = document.getElementById('ragTestQuery');
+const testDirectSearchBtn = document.getElementById('testDirectSearchBtn');
+const testRagQueryBtn = document.getElementById('testRagQueryBtn');
+const ragTestResults = document.getElementById('ragTestResults');
+const ragTestContent = document.getElementById('ragTestContent');
+const maxResultsSelect = document.getElementById('maxResultsSelect');
+
+// Debug: Check if RAG test elements are properly loaded
+console.log('RAG Test Debug - ragTestQuery element:', ragTestQuery);
+console.log('RAG Test Debug - ragTestQuery disabled?', ragTestQuery ? ragTestQuery.disabled : 'element not found');
+console.log('RAG Test Debug - ragTestQuery readonly?', ragTestQuery ? ragTestQuery.readOnly : 'element not found');
+// File Upload elements
+const uploadModeCheckbox = document.getElementById('uploadModeCheckbox');
+const fileUploadSection = document.getElementById('fileUploadSection');
+const vectorStoreIdSection = document.getElementById('vectorStoreIdSection');
+const fileUploadInput = document.getElementById('fileUploadInput');
+const fileUploadContainer = document.getElementById('fileUploadContainer');
+const selectedFileName = document.getElementById('selectedFileName');
+const browseFileBtn = document.getElementById('browseFileBtn');
+const uploadProgressContainer = document.getElementById('uploadProgressContainer');
+const uploadProgressFill = document.getElementById('uploadProgressFill');
+const uploadStatusText = document.getElementById('uploadStatusText');
+const uploadPercentage = document.getElementById('uploadPercentage');
 // RAG Search DOM elements
 const ragSearchCheckbox = document.getElementById('ragSearchCheckbox');
 const ragAssociationsSection = document.getElementById('ragAssociationsSection');
 const ragAssociationsList = document.getElementById('ragAssociationsList');
 const addRagAssociationBtn = document.getElementById('addRagAssociationBtn');
+// Web Search DOM elements
+const webSearchCheckbox = document.getElementById('webSearchCheckbox');
+const webSearchOptionsSection = document.getElementById('webSearchOptionsSection');
+const webSearchResultsSlider = document.getElementById('webSearchResultsSlider');
+const webSearchResultsValue = document.getElementById('webSearchResultsValue');
+const templateWebSearchCheckbox = document.getElementById('templateWebSearchCheckbox');
+const webSearchConfigSection = document.getElementById('webSearchConfigSection');
+
 let userTemplates = [];
 let currentEditingTemplate = null;
 // RAG Store variables
@@ -137,7 +171,7 @@ async function initializeApp() {
     // Load user templates first
     userTemplates = await ipcRenderer.invoke('get-instruction-templates');
     
-    // Ensure backward compatibility: add RAG fields to existing templates
+    // Ensure backward compatibility: add RAG and web search fields to existing templates
     userTemplates.forEach(template => {
         if (!template.hasOwnProperty('ragSearch')) {
             template.ragSearch = false;
@@ -145,6 +179,9 @@ async function initializeApp() {
         if (!template.hasOwnProperty('ragAssociations')) {
             template.ragAssociations = [];
         }
+        
+        // Add web search defaults for backward compatibility
+        initializeWebSearchDefaults(template);
     });
     
     // Make userTemplates globally accessible for main process
@@ -200,6 +237,25 @@ async function initializeApp() {
     ragSearchCheckbox.addEventListener('change', onRagSearchToggle);
     addRagAssociationBtn.addEventListener('click', addRagAssociation);
 
+    // Setup web search functionality
+    console.log('Setting up web search functionality:', {
+        webSearchCheckbox: !!webSearchCheckbox,
+        webSearchOptionsSection: !!webSearchOptionsSection,
+        templateWebSearchCheckbox: !!templateWebSearchCheckbox
+    });
+    
+    if (webSearchCheckbox) {
+        webSearchCheckbox.addEventListener('change', onWebSearchToggle);
+    }
+    
+    if (webSearchResultsSlider) {
+        webSearchResultsSlider.addEventListener('input', updateWebSearchResultsValue);
+    }
+    
+    if (templateWebSearchCheckbox) {
+        templateWebSearchCheckbox.addEventListener('change', onTemplateWebSearchToggle);
+    }
+
     // Setup LLM clipboard buttons
     console.log('Setting up LLM clipboard buttons:', {
         clearLlmClipboard: !!clearLlmClipboard,
@@ -231,6 +287,12 @@ async function initializeApp() {
         await ipcRenderer.invoke('save-copy-send', copySendCheckbox.checked);
     });
 
+    // Add event listener for Responses API checkbox
+    useResponsesAPICheckbox.addEventListener('change', async () => {
+        await ipcRenderer.invoke('save-use-responses-api', useResponsesAPICheckbox.checked);
+        showStatus(useResponsesAPICheckbox.checked ? 'Switched to Responses API' : 'Switched to Chat Completions API', 'info');
+    });
+
     // Add IPC listeners for Copy Send processing
     ipcRenderer.on('copy-processing-started', () => {
         showCopySendLoading(true);
@@ -246,6 +308,11 @@ async function initializeApp() {
         showStatus('Background LLM processing failed: ' + errorMessage, 'error');
     });
 
+    // Listen for upload progress updates from main process
+    ipcRenderer.on('upload-progress-update', (event, data) => {
+        updateUploadProgress(data.percentage, data.status);
+    });
+
     // Wire up modal event listeners
     modalClose.addEventListener('click', hideModal);
     modalCancel.addEventListener('click', hideModal);
@@ -255,6 +322,45 @@ async function initializeApp() {
     ragModalClose.addEventListener('click', hideRagStoreModal);
     ragModalCancel.addEventListener('click', hideRagStoreModal);
     ragModalSave.addEventListener('click', saveRagStore);
+    
+    // File upload event listeners
+    uploadModeCheckbox.addEventListener('change', toggleUploadMode);
+    browseFileBtn.addEventListener('click', () => fileUploadInput.click());
+    fileUploadInput.addEventListener('change', handleFileSelection);
+    fileUploadContainer.addEventListener('click', () => fileUploadInput.click());
+    
+    // Drag and drop events
+    fileUploadContainer.addEventListener('dragover', handleDragOver);
+    fileUploadContainer.addEventListener('drop', handleFileDrop);
+    fileUploadContainer.addEventListener('dragleave', handleDragLeave);
+    
+    // RAG testing event listeners
+    testDirectSearchBtn.addEventListener('click', testDirectSearch);
+    testRagQueryBtn.addEventListener('click', testRagQuery);
+    
+    // Debug: Ensure RAG test input is enabled and add test listener
+    if (ragTestQuery) {
+        ragTestQuery.disabled = false;
+        ragTestQuery.readOnly = false;
+        ragTestQuery.style.pointerEvents = 'auto';
+        ragTestQuery.style.userSelect = 'text';
+        
+        ragTestQuery.addEventListener('focus', () => {
+            console.log('RAG Test Debug - Input received focus');
+        });
+        
+        ragTestQuery.addEventListener('input', () => {
+            console.log('RAG Test Debug - Input changed, value:', ragTestQuery.value);
+        });
+        
+        ragTestQuery.addEventListener('click', () => {
+            console.log('RAG Test Debug - Input clicked');
+        });
+        
+        console.log('RAG Test Debug - Event listeners added to input');
+    } else {
+        console.error('RAG Test Debug - ragTestQuery element not found!');
+    }
     
     // Close modal when clicking outside
     templateModal.addEventListener('click', (e) => {
@@ -305,6 +411,33 @@ async function initializeApp() {
     // console.log('MediaDevices available:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
 }
 
+// Theme Management
+function applyTheme(isDarkMode) {
+    if (isDarkMode) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+    }
+}
+
+// Load theme on startup
+async function loadTheme() {
+    try {
+        const isDarkMode = await ipcRenderer.invoke('get-dark-mode');
+        applyTheme(isDarkMode);
+    } catch (error) {
+        console.error('Error loading theme:', error);
+    }
+}
+
+// Listen for theme changes from menu
+ipcRenderer.on('theme-changed', (event, isDarkMode) => {
+    applyTheme(isDarkMode);
+});
+
+// Initialize theme on startup
+loadTheme();
+
 // Event listeners
 saveApiKeyBtn.addEventListener('click', async () => {
     const apiKey = apiKeyInput.value.trim();
@@ -351,6 +484,7 @@ temperatureSlider.addEventListener('input', () => {
 
 maxTokensInput.addEventListener('change', saveSettings);
 modelSelect.addEventListener('change', saveSettings);
+maxResultsSelect.addEventListener('change', saveSettings);
 
 testInjectionBtn.addEventListener('click', async () => {
     try {
@@ -546,10 +680,68 @@ function displayTranscript(transcript) {
 }
 
 function displayResponse(response) {
-    if (response && response.trim()) {
-        responseDisplay.innerHTML = `<div class="response-text">${response}</div>`;
+    // Handle both old string format and new enhanced object format
+    if (typeof response === 'string') {
+        // Old format - just text
+        if (response && response.trim()) {
+            responseDisplay.innerHTML = `<div class="response-text">${response}</div>`;
+        } else {
+            responseDisplay.innerHTML = '<p class="no-response">No response available</p>';
+        }
+    } else if (response && typeof response === 'object') {
+        // New enhanced format with metadata
+        const { text, webSearchUsed, ragUsed, citations, processingTime } = response;
+        
+        if (text && text.trim()) {
+            // Build indicators HTML
+            let indicatorsHtml = '';
+            if (webSearchUsed || ragUsed) {
+                indicatorsHtml = '<div class="response-indicators">';
+                
+                if (webSearchUsed) {
+                    indicatorsHtml += '<span class="indicator web-search-indicator">🌐 Web Search Used</span>';
+                }
+                
+                if (ragUsed) {
+                    indicatorsHtml += '<span class="indicator rag-search-indicator">📁 RAG Search Used</span>';
+                }
+                
+                if (processingTime) {
+                    indicatorsHtml += `<span class="indicator processing-time">⏱️ ${processingTime}ms</span>`;
+                }
+                
+                indicatorsHtml += '</div>';
+            }
+            
+            // Build citations HTML
+            let citationsHtml = '';
+            if (citations && citations.length > 0) {
+                citationsHtml = '<div class="response-citations"><h4>Sources:</h4><ul>';
+                citations.forEach((citation, index) => {
+                    citationsHtml += `<li><a href="${citation.url}" target="_blank" title="${citation.title}">${citation.title || citation.url}</a></li>`;
+                });
+                citationsHtml += '</ul></div>';
+            }
+            
+            responseDisplay.innerHTML = `
+                ${indicatorsHtml}
+                <div class="response-text">${text}</div>
+                ${citationsHtml}
+            `;
+        } else {
+            responseDisplay.innerHTML = '<p class="no-response">No response available</p>';
+        }
     } else {
         responseDisplay.innerHTML = '<p class="no-response">No response available</p>';
+    }
+}
+
+function displayTranscript(transcript) {
+    const transcriptDisplay = document.getElementById('transcriptDisplay');
+    if (transcript && transcript.trim()) {
+        transcriptDisplay.innerHTML = `<div class="transcript-text">${transcript}</div>`;
+    } else {
+        transcriptDisplay.innerHTML = '<p class="no-transcript">No transcript yet. Use the hotkey to start recording.</p>';
     }
 }
 
@@ -558,6 +750,7 @@ async function saveSettings() {
         await ipcRenderer.invoke('save-model', modelSelect.value);
         await ipcRenderer.invoke('save-temperature', parseFloat(temperatureSlider.value));
         await ipcRenderer.invoke('save-max-tokens', parseInt(maxTokensInput.value));
+        await ipcRenderer.invoke('save-max-results', parseInt(maxResultsSelect.value));
     } catch (error) {
         console.error('Error saving settings:', error);
     }
@@ -572,15 +765,20 @@ async function loadSettings() {
         // Load Copy Send setting
         const copySendEnabled = await ipcRenderer.invoke('get-copy-send');
         
+        // Load Responses API setting
+        const useResponsesAPI = await ipcRenderer.invoke('get-use-responses-api');
+        
         // Apply settings to UI
         autoPasteCheckbox.checked = autoPasteEnabled;
         llmShortcutsEnabled.checked = llmShortcutsEnabledValue;
         copySendCheckbox.checked = copySendEnabled;
+        useResponsesAPICheckbox.checked = useResponsesAPI;
         
         // Load other settings
         const model = await ipcRenderer.invoke('get-model');
         const temperature = await ipcRenderer.invoke('get-temperature');
         const maxTokens = await ipcRenderer.invoke('get-max-tokens');
+        const maxResults = await ipcRenderer.invoke('get-max-results');
         
         if (model) modelSelect.value = model;
         if (temperature) {
@@ -588,6 +786,7 @@ async function loadSettings() {
             temperatureValue.textContent = temperature;
         }
         if (maxTokens) maxTokensInput.value = maxTokens;
+        if (maxResults) maxResultsSelect.value = maxResults;
         
     } catch (error) {
         console.error('Error loading settings:', error);
@@ -684,37 +883,35 @@ ipcRenderer.on('start-recording', async () => {
         mediaRecorder.ondataavailable = (event) => {
             // console.log('=== AUDIO DATA AVAILABLE ===');
             // console.log('Data size:', event.data.size);
-            // console.log('Data type:', event.data.type);
             if (event.data.size > 0) {
                 audioChunks.push(event.data);
-                // console.log('Added audio chunk, total chunks:', audioChunks.length);
+                // console.log('✅ Added audio chunk, total chunks:', audioChunks.length);
             } else {
-                // console.warn('Received empty audio data!');
+                console.warn('⚠️ Received empty audio data!');
             }
         };
         
         mediaRecorder.onstop = async () => {
             // console.log('=== MEDIARECORDER STOPPED ===');
-            // console.log('Total audio chunks collected:', audioChunks.length);
+            console.log('📊 Audio chunks collected:', audioChunks.length);
             
             const stopTime = Date.now();
             
             // Stop all tracks to release microphone
             stream.getTracks().forEach(track => track.stop());
-            // console.log('All media tracks stopped');
             
             if (audioChunks.length === 0) {
-                // console.error('NO AUDIO CHUNKS COLLECTED!');
+                console.error('❌ NO AUDIO CHUNKS COLLECTED!');
                 ipcRenderer.send('recording-data', null);
                 return;
             }
             
             // Create blob and convert to array buffer - optimized approach
             const audioBlob = new Blob(audioChunks, { type: mimeType || 'audio/webm' });
-            // console.log('Audio blob created - size:', audioBlob.size, 'type:', audioBlob.type);
+            console.log('🎤 Audio blob created:', audioBlob.size, 'bytes');
             
             if (audioBlob.size === 0) {
-                // console.error('AUDIO BLOB IS EMPTY!');
+                console.error('❌ AUDIO BLOB IS EMPTY!');
                 ipcRenderer.send('recording-data', null);
                 return;
             }
@@ -722,16 +919,14 @@ ipcRenderer.on('start-recording', async () => {
             // Optimize memory usage - use arrayBuffer directly
             try {
                 const arrayBuffer = await audioBlob.arrayBuffer();
-                // console.log('=== SENDING AUDIO DATA ===');
-                // console.log('Array buffer size:', arrayBuffer.byteLength);
                 
-                // Convert to Uint8Array more efficiently
-                const uint8Array = new Uint8Array(arrayBuffer);
+                // Convert to Buffer for reliable binary data transmission
+                const buffer = Buffer.from(arrayBuffer);
                 const processingTime = Date.now() - stopTime;
-                // console.log(`Audio processing completed in ${processingTime}ms`);
+                console.log(`📤 Sending ${buffer.length} bytes to transcription (${processingTime}ms)`);
                 
-                // Send as array (IPC requirement) but more efficiently
-                ipcRenderer.send('recording-data', Array.from(uint8Array));
+                // Send as Buffer to preserve binary data integrity
+                ipcRenderer.send('recording-data', buffer);
             } catch (error) {
                 // console.error('Error processing audio data:', error);
                 ipcRenderer.send('recording-data', null);
@@ -843,7 +1038,7 @@ function addTooltips() {
         'importTemplatesBtn': 'Import templates from JSON file',
         'clearLlmClipboard': 'Clear the LLM clipboard content',
         'previewLlmClipboard': 'Preview LLM clipboard content',
-        'llmShortcutsEnabled': 'Enable/disable Ctrl+Alt+C/V shortcuts'
+        'llmShortcutsEnabled': 'Enable/disable Ctrl+C processing shortcut'
     };
 
     Object.entries(tooltips).forEach(([id, tooltip]) => {
@@ -897,12 +1092,16 @@ function onTemplateSelect(e) {
     
     if (promptTemplates[val]) {
         text = promptTemplates[val];
-        // Built-in templates don't have RAG functionality
+        // Built-in templates don't have RAG or web search functionality
         currentTemplate = null;
     } else {
         template = userTemplates.find(t => t.id === val);
         if (template) {
             text = template.content;
+            
+            // Initialize defaults for older templates (backward compatibility)
+            initializeWebSearchDefaults(template);
+            
             currentTemplate = template;
         } else {
             currentTemplate = null;
@@ -914,6 +1113,9 @@ function onTemplateSelect(e) {
     
     // Update RAG UI based on selected template
     updateRagUI();
+    
+    // Update web search UI based on selected template
+    updateWebSearchUI();
 }
 
 // Modal functions
@@ -946,10 +1148,16 @@ async function saveTemplate() {
         return;
     }
     
+    // Get web search settings from the modal
+    const webSearchEnabled = templateWebSearchCheckbox?.checked || false;
+    const webSearchMaxResults = parseInt(document.getElementById('webSearchMaxResults')?.value || 5);
+    const webSearchIncludeResults = document.getElementById('webSearchIncludeResults')?.checked !== false;
+    
     if (currentEditingTemplate) {
         // Edit existing template
         currentEditingTemplate.name = name;
         currentEditingTemplate.content = content;
+        
         // Preserve existing RAG settings when editing
         if (!currentEditingTemplate.ragSearch) {
             currentEditingTemplate.ragSearch = false;
@@ -957,17 +1165,32 @@ async function saveTemplate() {
         if (!currentEditingTemplate.ragAssociations) {
             currentEditingTemplate.ragAssociations = [];
         }
+        
+        // Update web search settings
+        currentEditingTemplate.webSearch = webSearchEnabled;
+        currentEditingTemplate.webSearchConfig = {
+            enabled: webSearchEnabled,
+            maxResults: webSearchMaxResults,
+            includeResults: webSearchIncludeResults
+        };
     } else {
-        // Add new template with RAG fields
+        // Add new template with RAG and web search fields
         const id = Date.now().toString();
         userTemplates.push({ 
             id, 
             name, 
             content,
             ragSearch: false,
-            ragAssociations: []
+            ragAssociations: [],
+            webSearch: webSearchEnabled,
+            webSearchConfig: {
+                enabled: webSearchEnabled,
+                maxResults: webSearchMaxResults,
+                includeResults: webSearchIncludeResults
+            }
         });
     }
+    
     // Update global reference
     window.userTemplates = userTemplates;
     
@@ -996,8 +1219,31 @@ function editTemplate() {
         alert('Select a custom template to edit');
         return;
     }
+    
+    // Initialize defaults if needed for backward compatibility
+    initializeWebSearchDefaults(tpl);
+    
     currentEditingTemplate = tpl;
     showModal('Edit Template', tpl.name, tpl.content);
+    
+    // Populate web search fields in modal
+    if (templateWebSearchCheckbox) {
+        templateWebSearchCheckbox.checked = tpl.webSearch || false;
+        onTemplateWebSearchToggle(); // Show/hide config section
+    }
+    
+    if (tpl.webSearchConfig) {
+        const maxResultsInput = document.getElementById('webSearchMaxResults');
+        const includeResultsCheckbox = document.getElementById('webSearchIncludeResults');
+        
+        if (maxResultsInput) {
+            maxResultsInput.value = tpl.webSearchConfig.maxResults || 5;
+        }
+        
+        if (includeResultsCheckbox) {
+            includeResultsCheckbox.checked = tpl.webSearchConfig.includeResults !== false;
+        }
+    }
 }
 
 async function deleteTemplate() {
@@ -1089,45 +1335,64 @@ function onRagStoreSelect(e) {
 async function saveRagStore() {
     const name = ragStoreNameInput.value.trim();
     const vectorStoreId = ragStoreIdInput.value.trim();
+    const isUploadMode = uploadModeCheckbox.checked;
+    const file = fileUploadInput.files[0];
     
     if (!name) {
-        alert('Please enter a RAG store name');
+        showStatus('Please enter a RAG store name', 'error');
         return;
     }
     
-    if (!vectorStoreId) {
-        alert('Please enter a Vector Store ID');
-        return;
-    }
-    
-    // Check for duplicate names (excluding current editing store)
-    const duplicateName = ragStores.find(store => 
-        store.name.toLowerCase() === name.toLowerCase() && 
-        (!currentEditingRagStore || store.id !== currentEditingRagStore.id)
-    );
-    if (duplicateName) {
-        alert('A RAG store with this name already exists. Please choose a different name.');
-        return;
-    }
-    
-    // Check for duplicate Vector Store IDs (excluding current editing store)
-    const duplicateId = ragStores.find(store => 
-        store.vectorStoreId === vectorStoreId && 
-        (!currentEditingRagStore || store.id !== currentEditingRagStore.id)
-    );
-    if (duplicateId) {
-        alert('A RAG store with this Vector Store ID already exists. Please choose a different ID.');
-        return;
-    }
-    
-    if (currentEditingRagStore) {
-        // Edit existing RAG store
-        currentEditingRagStore.name = name;
-        currentEditingRagStore.vectorStoreId = vectorStoreId;
+    if (isUploadMode) {
+        // File upload mode - validate file
+        if (!file) {
+            showStatus('Please select a file to upload', 'error');
+            return;
+        }
+        
+        try {
+            showStatus('Processing...', 'info');
+            await createVectorStoreFromFile(name, file);
+        } catch (error) {
+            showStatus(`Error: ${error.message}`, 'error');
+            return;
+        }
     } else {
-        // Add new RAG store
-        const id = Date.now().toString();
-        ragStores.push({ id, name, vectorStoreId });
+        // Vector Store ID mode - validate ID
+        if (!vectorStoreId) {
+            showStatus('Please enter a Vector Store ID', 'error');
+            return;
+        }
+        
+        // Check for duplicate names (excluding current editing store)
+        const duplicateName = ragStores.find(store => 
+            store.name.toLowerCase() === name.toLowerCase() && 
+            (!currentEditingRagStore || store.id !== currentEditingRagStore.id)
+        );
+        if (duplicateName) {
+            showStatus('A RAG store with this name already exists. Please choose a different name.', 'error');
+            return;
+        }
+        
+        // Check for duplicate Vector Store IDs (excluding current editing store)
+        const duplicateId = ragStores.find(store => 
+            store.vectorStoreId === vectorStoreId && 
+            (!currentEditingRagStore || store.id !== currentEditingRagStore.id)
+        );
+        if (duplicateId) {
+            showStatus('A RAG store with this Vector Store ID already exists. Please choose a different ID.', 'error');
+            return;
+        }
+        
+        if (currentEditingRagStore) {
+            // Edit existing RAG store
+            currentEditingRagStore.name = name;
+            currentEditingRagStore.vectorStoreId = vectorStoreId;
+        } else {
+            // Add new RAG store
+            const id = Date.now().toString();
+            ragStores.push({ id, name, vectorStoreId });
+        }
     }
     
     // Update global reference
@@ -1235,6 +1500,13 @@ function hideRagStoreModal() {
     currentEditingRagStore = null;
     ragStoreNameInput.value = '';
     ragStoreIdInput.value = '';
+    
+    // Reset file upload state
+    uploadModeCheckbox.checked = false;
+    fileUploadSection.style.display = 'none';
+    vectorStoreIdSection.style.display = 'block';
+    ragModalSave.textContent = 'Save';
+    resetFileUpload();
 }
 
 // LLM Clipboard Functions
@@ -1518,5 +1790,581 @@ async function saveCurrentTemplate() {
         await ipcRenderer.invoke('save-instruction-templates', userTemplates);
     }
 }
+
+// File Upload Functions
+function toggleUploadMode() {
+    const isUploadMode = uploadModeCheckbox.checked;
+    
+    if (isUploadMode) {
+        fileUploadSection.style.display = 'block';
+        vectorStoreIdSection.style.display = 'none';
+        ragModalSave.textContent = 'Create Vector Store';
+    } else {
+        fileUploadSection.style.display = 'none';
+        vectorStoreIdSection.style.display = 'block';
+        ragModalSave.textContent = 'Save';
+        resetFileUpload();
+    }
+}
+
+function handleFileSelection(event) {
+    const file = event.target.files[0];
+    if (file) {
+        validateAndDisplayFile(file);
+    }
+}
+
+function handleDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    fileUploadContainer.style.borderColor = '#007bff';
+    fileUploadContainer.style.backgroundColor = '#f0f8ff';
+}
+
+function handleDragLeave(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    fileUploadContainer.style.borderColor = '#ddd';
+    fileUploadContainer.style.backgroundColor = '#f9f9f9';
+}
+
+function handleFileDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    fileUploadContainer.style.borderColor = '#ddd';
+    fileUploadContainer.style.backgroundColor = '#f9f9f9';
+    
+    const files = event.dataTransfer.files;
+    if (files.length > 0) {
+        const file = files[0];
+        fileUploadInput.files = files;
+        validateAndDisplayFile(file);
+    }
+}
+
+function validateAndDisplayFile(file) {
+    // File size validation (20MB)
+    const MAX_FILE_SIZE = 20 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+        showStatus(`File size (${formatFileSize(file.size)}) exceeds 20MB limit`, 'error');
+        resetFileUpload();
+        return;
+    }
+    
+    // Check for empty files
+    if (file.size === 0) {
+        showStatus('Cannot upload empty files', 'error');
+        resetFileUpload();
+        return;
+    }
+    
+    // File type validation
+    const allowedTypes = [
+        'text/plain', 'application/pdf', 'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/markdown', 'application/json', 'text/csv'
+    ];
+    
+    const allowedExtensions = ['.txt', '.pdf', '.doc', '.docx', '.md', '.json', '.csv'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
+        showStatus('Unsupported file type. Please select TXT, PDF, DOC, DOCX, MD, JSON, or CSV files.', 'error');
+        resetFileUpload();
+        return;
+    }
+    
+    // Additional validation for potentially problematic files
+    if (fileExtension === '.pdf' && file.size > 5 * 1024 * 1024) {
+        showStatus('Large PDF files may take longer to process. Please wait...', 'warning');
+    }
+    
+    // Display file info
+    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+    selectedFileName.textContent = `${file.name} (${fileSizeMB}MB)`;
+    
+    // Color code based on file size
+    if (file.size > 10 * 1024 * 1024) { // > 10MB
+        selectedFileName.style.color = '#ffc107'; // Warning yellow
+    } else {
+        selectedFileName.style.color = '#28a745'; // Success green
+    }
+    
+    uploadProgressContainer.style.display = 'block';
+    updateUploadProgress(0, 'File ready for upload');
+}
+
+function resetFileUpload() {
+    fileUploadInput.value = '';
+    selectedFileName.textContent = 'No file selected';
+    selectedFileName.style.color = '#666';
+    uploadProgressContainer.style.display = 'none';
+    updateUploadProgress(0, 'Preparing upload...');
+}
+
+function updateUploadProgress(percentage, status) {
+    uploadProgressFill.style.width = `${percentage}%`;
+    uploadStatusText.textContent = status;
+    uploadPercentage.textContent = `${percentage}%`;
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+async function readFileContent(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        
+        // Handle different file types appropriately
+        const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+        
+        if (fileExtension === '.pdf' || fileExtension === '.doc' || fileExtension === '.docx') {
+            // For binary files, read as ArrayBuffer and then convert to Buffer
+            reader.readAsArrayBuffer(file);
+        } else {
+            // For text files, read as text
+            reader.readAsText(file);
+        }
+    });
+}
+
+async function createVectorStoreFromFile(name, file) {
+    try {
+        // Validate file size (20MB)
+        const MAX_FILE_SIZE = 20 * 1024 * 1024;
+        if (file.size > MAX_FILE_SIZE) {
+            throw new Error(`File size (${formatFileSize(file.size)}) exceeds 20MB limit`);
+        }
+        
+        // Update progress
+        updateUploadProgress(10, 'Reading file...');
+        
+        // Read file content with timeout
+        const fileContent = await Promise.race([
+            readFileContent(file),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('File reading timeout - file may be corrupted')), 30000)
+            )
+        ]);
+        
+        updateUploadProgress(30, 'Processing content...');
+    
+    // Create vector store via main process
+    const result = await ipcRenderer.invoke('create-vector-store', {
+        name,
+        fileName: file.name,
+        fileContent,
+        fileType: file.type,
+        fileSize: file.size
+    });
+    
+    updateUploadProgress(100, 'Vector store created successfully!');
+    
+    // Add to local storage
+    const newRagStore = {
+        id: result.vectorStoreId,
+        name: name,
+        vectorStoreId: result.vectorStoreId,
+        fileName: file.name,
+        fileSize: formatFileSize(file.size),
+        createdAt: new Date().toISOString()
+    };
+    
+    ragStores.push(newRagStore);
+    await ipcRenderer.invoke('save-rag-stores', ragStores);
+    renderRagStoreOptions();
+    hideRagStoreModal();
+    
+    // Select the new RAG store
+    ragStoreSelect.value = newRagStore.id;
+    showStatus('RAG store created successfully', 'success');
+    
+    } catch (error) {
+        console.error('Error in createVectorStoreFromFile:', error);
+        updateUploadProgress(0, 'Upload failed');
+        throw error;
+    }
+}
+
+// RAG Testing Functions
+async function testDirectSearch() {
+    const query = ragTestQuery.value.trim();
+    const selectedStore = ragStores.find(s => s.id === ragStoreSelect.value);
+    
+    if (!query) {
+        showStatus('Please enter a search query', 'error');
+        return;
+    }
+    
+    if (!selectedStore) {
+        showStatus('Please select a RAG store first', 'error');
+        return;
+    }
+    
+    try {
+        showStatus('Searching vector store...', 'info');
+        
+        const results = await ipcRenderer.invoke('search-vector-store', {
+            vectorStoreId: selectedStore.vectorStoreId,
+            query: query,
+            maxResults: parseInt(maxResultsSelect.value) || 5
+        });
+        
+        displaySearchResults(results.results, 'Direct Search Results');
+        showStatus('Search completed', 'success');
+        
+    } catch (error) {
+        showStatus(`Search failed: ${error.message}`, 'error');
+        console.error('Direct search error:', error);
+    }
+}
+
+async function testRagQuery() {
+    const query = ragTestQuery.value.trim();
+    const selectedStore = ragStores.find(s => s.id === ragStoreSelect.value);
+    
+    if (!query) {
+        showStatus('Please enter a query', 'error');
+        return;
+    }
+    
+    if (!selectedStore) {
+        showStatus('Please select a RAG store first', 'error');
+        return;
+    }
+    
+    try {
+        showStatus('Generating RAG response...', 'info');
+        
+        const results = await ipcRenderer.invoke('query-with-rag', {
+            vectorStoreId: selectedStore.vectorStoreId,
+            query: query,
+            model: modelSelect.value || 'gpt-4o-mini',
+            maxResults: parseInt(maxResultsSelect.value) || 5
+        });
+        
+        displayRagResults(results);
+        showStatus('RAG query completed', 'success');
+        
+    } catch (error) {
+        showStatus(`RAG query failed: ${error.message}`, 'error');
+        console.error('RAG query error:', error);
+    }
+}
+
+function displaySearchResults(results, title) {
+    let html = `<h6>${title}</h6>`;
+    
+    if (results.length === 0) {
+        html += '<p><em>No results found</em></p>';
+    } else {
+        results.forEach((result, index) => {
+            const uniqueId = `result-content-${Date.now()}-${index}`;
+            const needsTruncation = result.content.length > 300;
+            const truncatedContent = result.content.substring(0, 300);
+            
+            html += `
+                <div style="border: 1px solid #eee; margin: 10px 0; padding: 10px; border-radius: 3px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <strong>${result.filename}</strong>
+                        <span style="color: #666;">Score: ${result.score.toFixed(3)}</span>
+                    </div>
+                    <div style="font-size: 0.9em; color: #666; margin-bottom: 5px;">
+                        File ID: ${result.fileId}
+                    </div>
+                    ${result.attributes ? `
+                        <div style="font-size: 0.85em; color: #777; margin-bottom: 8px;">
+                            <strong>Metadata:</strong> ${JSON.stringify(result.attributes)}
+                        </div>
+                    ` : ''}
+                    <div style="background: #f9f9f9; padding: 8px; border-radius: 3px; font-size: 0.9em;">
+                        <div id="${uniqueId}" style="max-height: none; overflow: hidden; transition: max-height 0.3s ease-out;">
+                            <span class="content-text">${needsTruncation ? truncatedContent + '...' : result.content}</span>
+                            ${needsTruncation ? `
+                                <span class="expand-btn" data-content-id="${uniqueId}" data-full-content="${escapeHtml(result.content)}" 
+                                      style="color: #333; cursor: pointer; margin-left: 5px; font-weight: bold;">
+                                    ▼ Show More
+                                </span>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    ragTestContent.innerHTML = html;
+    ragTestResults.style.display = 'block';
+    
+    // Add event listeners for expand/collapse buttons
+    const expandButtons = ragTestContent.querySelectorAll('.expand-btn');
+    expandButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const contentId = this.getAttribute('data-content-id');
+            const fullContent = this.getAttribute('data-full-content');
+            toggleContent(contentId, fullContent, this);
+        });
+    });
+}
+
+// Helper function to escape HTML for safe injection
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+}
+
+// Helper function to unescape HTML
+function unescapeHtml(escapedText) {
+    const div = document.createElement('div');
+    div.innerHTML = escapedText.replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+    return div.textContent;
+}
+
+// Toggle content expansion for search results
+function toggleContent(elementId, escapedFullContent, buttonElement) {
+    const contentElement = document.getElementById(elementId);
+    const contentTextElement = contentElement.querySelector('.content-text');
+    const isExpanded = buttonElement.textContent.includes('Show Less');
+    
+    // Unescape the HTML content
+    const fullContent = unescapeHtml(escapedFullContent);
+    
+    if (isExpanded) {
+        // Collapse: Show truncated content
+        const truncatedContent = fullContent.substring(0, 300) + '...';
+        contentTextElement.textContent = truncatedContent;
+        buttonElement.innerHTML = '▼ Show More';
+        contentElement.style.maxHeight = 'none';
+        contentElement.style.overflow = 'hidden';
+    } else {
+        // Expand: Show full content with scroll
+        contentTextElement.textContent = fullContent;
+        buttonElement.innerHTML = '▲ Show Less';
+        contentElement.style.maxHeight = '400px'; // Maximum height for scrolling
+        contentElement.style.overflow = 'auto';
+    }
+}
+
+function displayRagResults(results) {
+    let html = '<h6>RAG Response with Citations</h6>';
+    
+    // Display the AI response
+    html += `
+        <div style="border: 1px solid #28a745; margin: 10px 0; padding: 15px; border-radius: 5px; background: #f8fff8;">
+            <h6 style="color: #28a745; margin-bottom: 10px;">🤖 AI Response:</h6>
+            <div style="line-height: 1.6;">${results.response}</div>
+        </div>
+    `;
+    
+    // Display citations
+    if (results.citations && results.citations.length > 0) {
+        html += `
+            <div style="border: 1px solid #007bff; margin: 10px 0; padding: 10px; border-radius: 5px; background: #f0f8ff;">
+                <h6 style="color: #007bff; margin-bottom: 8px;">📚 Citations:</h6>
+                <ul style="margin: 0; padding-left: 20px;">
+        `;
+        results.citations.forEach(citation => {
+            html += `<li>${citation.filename} (ID: ${citation.fileId})</li>`;
+        });
+        html += '</ul></div>';
+    }
+    
+    // Display detailed search results if available
+    if (results.searchResults && results.searchResults.length > 0) {
+        html += '<div style="margin-top: 15px;"><h6>🔍 Underlying Search Results:</h6>';
+        results.searchResults.forEach((result, index) => {
+            const uniqueId = `rag-result-content-${Date.now()}-${index}`;
+            const needsTruncation = result.content.length > 300;
+            const truncatedContent = result.content.substring(0, 300);
+            
+            html += `
+                <div style="border: 1px solid #ffc107; margin: 8px 0; padding: 8px; border-radius: 3px; background: #fffef0;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <strong style="color: #856404;">${result.filename}</strong>
+                        <span style="color: #856404;">Score: ${result.score.toFixed(3)}</span>
+                    </div>
+                    <div style="font-size: 0.85em; color: #856404; background: #fff9e6; padding: 5px; border-radius: 2px;">
+                        <div id="${uniqueId}" style="max-height: none; overflow: hidden; transition: max-height 0.3s ease-out;">
+                            <span class="content-text">${needsTruncation ? truncatedContent + '...' : result.content}</span>
+                            ${needsTruncation ? `
+                                <span class="expand-btn" data-content-id="${uniqueId}" data-full-content="${escapeHtml(result.content)}" 
+                                      style="color: #333; cursor: pointer; margin-left: 5px; font-weight: bold;">
+                                    ▼ Show More
+                                </span>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+    
+    ragTestContent.innerHTML = html;
+    ragTestResults.style.display = 'block';
+    
+    // Add event listeners for expand/collapse buttons in RAG results
+    const ragExpandButtons = ragTestContent.querySelectorAll('.expand-btn');
+    ragExpandButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const contentId = this.getAttribute('data-content-id');
+            const fullContent = this.getAttribute('data-full-content');
+            toggleContent(contentId, fullContent, this);
+        });
+    });
+}
+
+// Validation functions for Max Results input
+function validateMaxResults(input) {
+    const value = parseInt(input.value);
+    const min = parseInt(input.min);
+    const max = parseInt(input.max);
+    
+    if (isNaN(value) || value < min || value > max) {
+        // Invalid value - show red border
+        input.style.borderColor = '#dc3545';
+        input.style.boxShadow = '0 0 0 0.2rem rgba(220, 53, 69, 0.25)';
+    } else {
+        // Valid value - restore normal border
+        input.style.borderColor = '#ddd';
+        input.style.boxShadow = 'none';
+    }
+}
+
+function correctMaxResults(input) {
+    const value = parseInt(input.value);
+    const min = parseInt(input.min);
+    const max = parseInt(input.max);
+    
+    if (isNaN(value) || input.value === '') {
+        // Empty or invalid input - set to default
+        input.value = 5;
+    } else if (value < min) {
+        // Below minimum - set to minimum
+        input.value = min;
+    } else if (value > max) {
+        // Above maximum - set to maximum
+        input.value = max;
+    }
+    
+    // Restore normal border after correction
+    input.style.borderColor = '#ddd';
+    input.style.boxShadow = 'none';
+    
+    // Trigger save settings if the value changed
+    saveSettings();
+}
+
+// Debug: Check if RAG test elements are properly loaded
+console.log('RAG Test Debug - ragTestQuery element:', ragTestQuery);
+console.log('RAG Test Debug - ragTestQuery disabled?', ragTestQuery ? ragTestQuery.disabled : 'element not found');
+console.log('RAG Test Debug - ragTestQuery readonly?', ragTestQuery ? ragTestQuery.readOnly : 'element not found');
+
+// =========================
+// WEB SEARCH FUNCTIONS
+// =========================
+
+// Initialize web search defaults for templates that don't have them
+function initializeWebSearchDefaults(template) {
+    if (!template.hasOwnProperty('webSearch')) {
+        template.webSearch = false;
+    }
+    if (!template.hasOwnProperty('webSearchConfig')) {
+        template.webSearchConfig = {
+            enabled: false,
+            maxResults: 5,
+            includeResults: true
+        };
+    }
+}
+
+// Handle web search checkbox toggle in main interface
+function onWebSearchToggle() {
+    const isChecked = webSearchCheckbox.checked;
+    
+    // Show/hide the options section
+    if (webSearchOptionsSection) {
+        webSearchOptionsSection.style.display = isChecked ? 'block' : 'none';
+    }
+    
+    // Update the current template
+    if (currentTemplate) {
+        currentTemplate.webSearch = isChecked;
+        currentTemplate.webSearchConfig.enabled = isChecked;
+        saveCurrentTemplate();
+    }
+}
+
+// Handle web search checkbox in template modal
+function onTemplateWebSearchToggle() {
+    const isChecked = templateWebSearchCheckbox.checked;
+    const configSection = webSearchConfigSection;
+    
+    if (configSection) {
+        configSection.style.display = isChecked ? 'block' : 'none';
+    }
+}
+
+// Update the results value display
+function updateWebSearchResultsValue() {
+    const slider = webSearchResultsSlider;
+    const valueDisplay = webSearchResultsValue;
+    
+    if (slider && valueDisplay) {
+        valueDisplay.textContent = slider.value;
+        
+        // Update current template
+        if (currentTemplate) {
+            currentTemplate.webSearchConfig.maxResults = parseInt(slider.value);
+            saveCurrentTemplate();
+        }
+    }
+}
+
+// Update the web search UI when a template is selected
+function updateWebSearchUI() {
+    const webSearchContainer = document.querySelector('.web-search-container');
+    
+    if (!webSearchContainer) return;
+    
+    if (!currentTemplate) {
+        // No user template selected - hide web search
+        webSearchContainer.style.display = 'none';
+        return;
+    }
+    
+    // Make sure template has web search defaults
+    initializeWebSearchDefaults(currentTemplate);
+    
+    // Show web search container
+    webSearchContainer.style.display = 'block';
+    
+    // Update checkbox
+    if (webSearchCheckbox) {
+        webSearchCheckbox.checked = currentTemplate.webSearch || false;
+    }
+    
+    // Update slider
+    if (webSearchResultsSlider && currentTemplate.webSearchConfig) {
+        webSearchResultsSlider.value = currentTemplate.webSearchConfig.maxResults || 5;
+        updateWebSearchResultsValue();
+    }
+    
+    // Show/hide options
+    onWebSearchToggle();
+}
+
+// Debug: Check if RAG test elements are properly loaded
+console.log('RAG Test Debug - ragTestQuery element:', ragTestQuery);
+console.log('RAG Test Debug - ragTestQuery disabled?', ragTestQuery ? ragTestQuery.disabled : 'element not found');
+console.log('RAG Test Debug - ragTestQuery readonly?', ragTestQuery ? ragTestQuery.readOnly : 'element not found');
 
  

@@ -1,40 +1,37 @@
-const clipboardy = require('clipboardy');
+const { clipboard } = require('electron');
 
 class TextInjector {
     constructor() {
-        this.isAvailable = true; // Clipboard is always available
+        this.isAvailable = true; // Electron clipboard is always available
     }
 
     async injectText(text) {
         try {
-            // Store current clipboard content to restore later (with error handling)
-            let previousClipboard = '';
-            try {
-                previousClipboard = await clipboardy.read();
-            } catch (readError) {
-                // console.warn('Could not read current clipboard content:', readError.message);
-                // Continue without storing previous content
+            // Direct clipboard write using Electron's clipboard - much more reliable
+            clipboard.writeText(text);
+            
+            // Immediate verification
+            const verifyClipboard = clipboard.readText();
+            const clipboardMatches = verifyClipboard === text;
+            
+            console.log('Clipboard updated successfully:', clipboardMatches);
+            
+            // If clipboard write failed, retry immediately
+            if (!clipboardMatches) {
+                console.error('WARNING: Clipboard verification failed! Retrying immediately...');
+                clipboard.writeText(text);
+                const retryVerify = clipboard.readText();
+                const retrySuccess = retryVerify === text;
+                console.log('Immediate retry verification:', retrySuccess);
+                
+                if (!retrySuccess) {
+                    throw new Error('Clipboard write failed after retry');
+                }
             }
             
-            // Copy the text to clipboard
-            await clipboardy.write(text);
-            
-            // console.log('Text copied to clipboard. User can paste with Ctrl+V');
-            
-            // Optional: Restore previous clipboard after a delay (only if we successfully read it)
-            if (previousClipboard) {
-                setTimeout(async () => {
-                    try {
-                        await clipboardy.write(previousClipboard);
-                    } catch (error) {
-                        // console.warn('Could not restore previous clipboard content:', error.message);
-                    }
-                }, 5000); // 5 seconds delay
-            }
-            
-            return { success: true, method: 'clipboard' };
+            // No clipboard restoration - we want to keep the LLM response for pasting
+            return { success: true, method: 'electron-clipboard' };
         } catch (error) {
-            // console.error('Failed to copy text to clipboard:', error);
             return { success: false, error: error.message };
         }
     }
@@ -42,8 +39,8 @@ class TextInjector {
     getStatus() {
         return {
             available: true,
-            method: 'clipboard',
-            description: 'Text is copied to clipboard - use Ctrl+V to paste'
+            method: 'electron-clipboard',
+            description: 'Text is copied to clipboard using Electron - use Ctrl+V to paste'
         };
     }
 }

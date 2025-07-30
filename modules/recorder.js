@@ -160,11 +160,15 @@ class Recorder {
   }
 
   handleRecordingData(audioData) {
-    // console.log('=== RECORDER: handleRecordingData called ===');
-    // console.log('audioData received:', audioData ? `${audioData.length} bytes` : 'null/undefined');
+    console.log('=== RECORDER: handleRecordingData called ===');
+    console.log('audioData type:', typeof audioData);
+    console.log('audioData is Array:', Array.isArray(audioData));
+    console.log('audioData is Buffer:', Buffer.isBuffer(audioData));
+    console.log('audioData has data property:', audioData && audioData.data !== undefined);
+    console.log('audioData length/size:', audioData ? (audioData.length || audioData.size || 'no length/size') : 'null/undefined');
     
     if (!this.recordingPromise) {
-      // console.log('Received recording data but no promise waiting');
+      console.log('Received recording data but no promise waiting');
       return;
     }
 
@@ -173,29 +177,24 @@ class Recorder {
       this.stopTimeout = null;
     }
 
+    // Try multiple formats that could be coming through IPC
+    let buffer = null;
+    
     if (audioData && Array.isArray(audioData) && audioData.length > 0) {
-      // Enhanced: Validate audio data size before processing
-      const bufferSize = audioData.length;
-      const fileSizeMB = bufferSize / (1024 * 1024);
-      
-      console.log(`📊 Audio data received: ${bufferSize} bytes (${fileSizeMB.toFixed(2)}MB)`);
-      
-      // Enhanced: Check for minimum file size (prevent empty recordings)
-      if (bufferSize < 1024) { // Less than 1KB
-        console.warn('⚠️ Audio data too small - may indicate no speech detected');
-        this.recordingPromise.reject(new Error('Audio data too small - no speech detected'));
-        this.recordingPromise = null;
-        return;
-      }
-      
-      // Enhanced: Check for maximum file size (Whisper API limit)
-      if (fileSizeMB > RECORDING_CONFIG.MAX_FILE_SIZE_MB) {
-        console.warn(`⚠️ Audio file too large (${fileSizeMB.toFixed(2)}MB) - exceeds ${RECORDING_CONFIG.MAX_FILE_SIZE_MB}MB limit`);
-        this.recordingPromise.reject(new Error(`Audio file too large (${fileSizeMB.toFixed(2)}MB) - maximum ${RECORDING_CONFIG.MAX_FILE_SIZE_MB}MB allowed`));
-        this.recordingPromise = null;
-        return;
-      }
-      
+      console.log('✅ Processing as Array');
+      buffer = Buffer.from(audioData);
+    } else if (audioData && Buffer.isBuffer(audioData) && audioData.length > 0) {
+      console.log('✅ Processing as Buffer');
+      buffer = audioData;
+    } else if (audioData && typeof audioData === 'object' && audioData.type === 'Buffer' && audioData.data) {
+      console.log('✅ Processing as IPC-serialized Buffer');
+      buffer = Buffer.from(audioData.data);
+    } else if (audioData && audioData instanceof Uint8Array && audioData.length > 0) {
+      console.log('✅ Processing as Uint8Array');
+      buffer = Buffer.from(audioData);
+    }
+
+    if (buffer && buffer.length > 0) {
       // Save audio data directly without slow conversion
       const tempDir = os.tmpdir();
       const timestamp = Date.now();
@@ -204,11 +203,10 @@ class Recorder {
       const audioFile = path.join(tempDir, `recording_${timestamp}.webm`);
       
       console.log('=== SAVING AUDIO FILE ===');
-      console.log(`📁 File path: ${audioFile}`);
-      console.log(`📊 Audio data size: ${bufferSize} bytes (${fileSizeMB.toFixed(2)}MB)`);
+      console.log('File path:', audioFile);
+      console.log('Audio data size:', buffer.length, 'bytes');
       
       const startTime = Date.now();
-      const buffer = Buffer.from(audioData);
       
       // Use async file write for better performance
       fs.writeFile(audioFile, buffer, (error) => {
@@ -227,8 +225,10 @@ class Recorder {
         }
       });
     } else {
-      // console.error('Invalid or empty audio data received');
-      this.recordingPromise.reject(new Error('No audio data received'));
+      console.log('❌ No valid audio data could be processed');
+      console.log('Data type:', typeof audioData);
+      console.log('Data details:', audioData);
+      this.recordingPromise.reject(new Error(`No valid audio data received. Type: ${typeof audioData}, isArray: ${Array.isArray(audioData)}, isBuffer: ${Buffer.isBuffer(audioData)}`));
       this.recordingPromise = null;
     }
   }

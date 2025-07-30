@@ -35,7 +35,8 @@ Please provide a clear and helpful response based on the instruction and transcr
       'casual': 'Please convert the following transcript into casual, conversational language:',
       'bullet': 'Please convert the following transcript into bullet points:',
       'question': 'Please generate questions based on the following transcript:',
-      'action': 'Please extract action items from the following transcript:'
+      'action': 'Please extract action items from the following transcript:',
+      'clean': 'You are a professional transcript editor.Your job is to take a raw, verbatim transcript of spoken language and turn it into a clear, concise, and coherent written transcript by: 1. Removing all filler words such as “um,” “uh,” “like,” “you know,” “so,” “actually,” “basically,” “right,” etc.2. Eliminating repetitions, stutters, and restarts (e.g., “I—I mean, we… we should…” → “We should…”) 3. Merging fragmented sentences when the speaker trails off and immediately corrects themselves. 4. Maintaining the original meaning and tone—do not change technical terms, names, or emphasis. 5. Keeping punctuation and capitalization correct for readability.'
     };
   }
 

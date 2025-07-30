@@ -1,9 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
 const { exec, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs').promises;
 const Store = require('electron-store');
-const clipboardy = require('clipboardy');
+
 const Recorder = require('./modules/recorder');
 const EnhancedTranscriber = require('./modules/transcriber-enhanced');
 const PromptBuilder = require('./modules/promptBuilder');
@@ -107,6 +107,17 @@ function createWindow() {
         },
         { type: 'separator' },
         {
+          label: 'Dark Mode',
+          type: 'checkbox',
+          checked: store.get('dark-mode', false),
+          click: (item) => {
+            const isDarkMode = item.checked;
+            store.set('dark-mode', isDarkMode);
+            mainWindow.webContents.send('theme-changed', isDarkMode);
+          }
+        },
+        { type: 'separator' },
+        {
           label: 'Toggle DevTools',
           accelerator: 'F12',
           click: () => {
@@ -200,8 +211,8 @@ function showKeyboardShortcutsDialog() {
 • Ctrl + Shift (alternative recording combination)
 
 📋 LLM CLIPBOARD SHORTCUTS:
-• Ctrl + Alt + C (copy selected text to LLM clipboard)
-• Ctrl + Alt + V (process LLM clipboard and paste result)
+• Ctrl+C (copy selected text → process with LLM → ready to paste)
+• Ctrl+V (paste the processed result)
 
 ⌨️ APPLICATION SHORTCUTS:
 • F1 (show this help)
@@ -210,11 +221,14 @@ function showKeyboardShortcutsDialog() {
 
 📝 WORKFLOW:
 1. Select text in any application
-2. Press Ctrl + Alt + C to copy to LLM clipboard
-3. Press Ctrl + Alt + V to process with current instruction template
+2. Press Ctrl+C to copy and process with current instruction template
+3. Press Ctrl+V to paste the processed result
 4. Or use Win + Alt to record voice and process immediately
 
-💡 TIP: Make sure "Enable LLM Shortcuts" is checked in Settings
+💡 TIPS: 
+• Enable "LLM Shortcuts" in Settings to use Ctrl+C processing
+• Enable "Copy Send" in Settings for Ctrl+C to process text automatically  
+• If Copy Send is disabled, Ctrl+C only stores text for manual processing
   `;
 
   dialog.showMessageBox(mainWindow, {
@@ -283,17 +297,16 @@ function initializeGlobalKeyboardListener() {
           startRecording();
         }
 
-        // Check for Ctrl+Alt+C combination (LLM Copy)
-        if (ctrlPressed && altPressed && e.name === 'C' && !isRecording && llmShortcutsEnabled) {
-          console.log('=== LLM COPY TRIGGERED ===');
-          handleLlmCopy();
+        // Check for Ctrl+C combination (LLM processing)
+        if (ctrlPressed && e.name === 'C' && !isRecording && llmShortcutsEnabled) {
+          console.log('=== LLM COPY TRIGGERED (Ctrl+C) ===');
+          // Small delay to allow normal copy to complete, then process
+          setTimeout(() => {
+            handleLlmCopyFromClipboard();
+          }, 100);
         }
 
-        // Check for Ctrl+Alt+V combination (LLM Paste)  
-        if (ctrlPressed && altPressed && e.name === 'V' && !isRecording && llmShortcutsEnabled) {
-          console.log('=== LLM PASTE TRIGGERED ===');
-          handleLlmPaste();
-        }
+        // Ctrl+C now handles the complete workflow: capture → process → clipboard
         
         // Check for F1 key (Help)
         if (e.name === 'F1') {
@@ -446,30 +459,51 @@ async function stopRecording() {
     
     mainWindow.webContents.send('status-update', 'Thinking...');
     
-    // Get instruction from renderer
-    const { instruction, ragAssociations } = await getInstructionAndRagFromRenderer();
+    // Get instruction, RAG, and web search configuration from renderer
+    const { instruction, ragAssociations, webSearchConfig } = await getInstructionAndRagFromRenderer();
+    
+    console.log('🎤 AUDIO PROCESSING - Configuration received:');
+    console.log('- Instruction preview:', instruction.substring(0, 50) + '...');
+    console.log('- RAG associations count:', ragAssociations.length);
+    console.log('- Web search enabled:', webSearchConfig.enabled);
+    console.log('- Full web search config:', JSON.stringify(webSearchConfig, null, 2));
     
     // Build prompt using existing promptBuilder
     const prompt = promptBuilder.build(instruction, transcript);
     
-    // Get LLM response using existing pipeline (with RAG if available)
+    // Get LLM response using smart method with web search support
     const llmStartTime = Date.now();
-    let response;
-    if (ragAssociations && ragAssociations.length > 0) {
-      response = await llmClient.getResponseWithRAG(prompt, ragAssociations);
-    } else {
-      response = await llmClient.getResponse(prompt);
-    }
+    const response = await llmClient.getResponseSmart(prompt, ragAssociations, webSearchConfig);
     
     const llmDuration = Date.now() - llmStartTime;
     // console.log(`LLM response completed in ${llmDuration}ms`);
     
-    // Send transcript and response to UI
-    mainWindow.webContents.send('transcript-update', transcript);
-    mainWindow.webContents.send('response-update', response);
+    // Handle both old string format and new object format for backward compatibility
+    const responseText = typeof response === 'string' ? response : response.text;
+    const webSearchUsed = typeof response === 'object' ? response.webSearchUsed : false;
+    const ragUsed = typeof response === 'object' ? response.ragUsed : false;
+    const citations = typeof response === 'object' ? response.citations : [];
     
-    // Inject response
-    const injectionResult = await injector.injectText(response);
+    console.log('📊 Response Summary:', {
+      textLength: responseText.length,
+      webSearchUsed: webSearchUsed,
+      ragUsed: ragUsed,
+      citationsCount: citations.length,
+      processingTime: llmDuration + 'ms'
+    });
+    
+    // Send transcript and enhanced response to UI
+    mainWindow.webContents.send('transcript-update', transcript);
+    mainWindow.webContents.send('response-update', {
+      text: responseText,
+      webSearchUsed: webSearchUsed,
+      ragUsed: ragUsed,
+      citations: citations,
+      processingTime: llmDuration
+    });
+    
+    // Inject response (use text content for injection)
+    const injectionResult = await injector.injectText(responseText);
     // Auto-paste if enabled
     if (injectionResult.success && store.get('auto-paste', true)) {
       if (process.platform === 'darwin') {
@@ -499,76 +533,17 @@ async function stopRecording() {
   }
 }
 
-// LLM Clipboard Functions
-async function captureLlmClipboard() {
-  let originalClipboard = '';
-  try {
-    // Step 1: Store original clipboard (handle empty clipboard)
-    try {
-      originalClipboard = await clipboardy.read();
-    } catch (e) {
-      originalClipboard = '';
-    }
-    
-    console.log('Original clipboard length:', originalClipboard.length);
-    
-    // Step 2: Simulate Ctrl+C based on platform (synchronously)
-    try {
-      if (process.platform === 'win32') {
-        // Use a more reliable Windows method with longer timeout
-        execSync(`powershell -WindowStyle Hidden -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^c'); Start-Sleep -Milliseconds 300"`, { timeout: 2000 });
-      } else if (process.platform === 'darwin') {
-        execSync(`osascript -e 'tell application "System Events" to keystroke "c" using command down'`, { timeout: 2000 });
-      } else {
-        execSync(`xdotool key --clearmodifiers ctrl+c`, { timeout: 2000 });
-      }
-    } catch (execError) {
-      console.error('Error executing copy command:', execError);
-      throw new Error('Failed to simulate Ctrl+C');
-    }
-    
-    // Step 3: Wait additional time for clipboard to update
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Step 4: Read new clipboard content
-    const selectedText = await clipboardy.read();
-    console.log('New clipboard length:', selectedText.length);
-    console.log('Clipboard changed:', selectedText !== originalClipboard);
-    
-    // Step 5: Restore original clipboard
-    await clipboardy.write(originalClipboard);
-    
-    // Step 6: Validate we got content (allow same content to be copied again)
-    if (!selectedText || selectedText.trim().length === 0) {
-      throw new Error('Selected text is empty');
-    }
-    
-    // If clipboard didn't change, it could mean:
-    // 1. Same text was selected again (valid)
-    // 2. No text was actually selected (invalid)
-    // We'll allow it through since we can't reliably distinguish between these cases
-    
-    return selectedText;
-  } catch (error) {
-    // Ensure clipboard is restored even on error
-    try {
-      await clipboardy.write(originalClipboard);
-    } catch (restoreError) {
-      console.error('Failed to restore clipboard:', restoreError);
-    }
-    throw error;
-  }
-}
+// LLM Clipboard Functions - simplified with Electron clipboard
 
-async function handleLlmCopy() {
+async function handleLlmCopyFromClipboard() {
   // Prevent concurrent operations
   if (isLlmOperationInProgress) {
     console.log('=== LLM COPY BLOCKED: Operation in progress ===');
-    mainWindow.webContents.send('status-update', 'Copy in progress - please wait');
+    mainWindow.webContents.send('status-update', 'Processing...');
     return;
   }
   
-  console.log('=== LLM COPY START ===');
+  console.log('=== CTRL+C TRIGGERED ===');
   console.log('Copy Send enabled:', copySendEnabled);
   
   const operationId = Date.now();
@@ -576,225 +551,89 @@ async function handleLlmCopy() {
   pendingOperations.add(operationId);
   
   try {
-    mainWindow.webContents.send('status-update', 'Copying to LLM clipboard...');
-    
-    console.log('Attempting to capture clipboard...');
-    const selectedText = await captureLlmClipboard();
-    console.log('Captured text length:', selectedText?.length || 0);
-    console.log('Captured text preview:', selectedText?.substring(0, 100) + '...');
+    // Step 1: Read text from clipboard (user already copied it with Ctrl+C)
+    const selectedText = clipboard.readText();
     
     if (!selectedText || selectedText.trim().length === 0) {
-      console.log('=== LLM COPY FAILED: No text captured ===');
-      mainWindow.webContents.send('status-update', 'No text selected');
+      console.log('=== CTRL+C FAILED: No text in clipboard ===');
+      mainWindow.webContents.send('status-update', 'No text in clipboard');
       return;
     }
+    
+    console.log('Clipboard text length:', selectedText.length);
     
     // Truncate if too long
     const truncatedText = selectedText.length > 10000 ? 
       selectedText.substring(0, 10000) + '...' : selectedText;
     
-    console.log('Final text length:', truncatedText.length);
-    
-    // Store in LLM clipboard (memory only, not electron-store)
+    // Store in LLM clipboard for UI display
     global.llmClipboard = {
       text: truncatedText,
       timestamp: new Date().toISOString()
     };
     
-    console.log('Stored in global.llmClipboard:', !!global.llmClipboard);
-    
     mainWindow.webContents.send('llm-clipboard-updated');
-    mainWindow.webContents.send('status-update', `Copied ${truncatedText.length} characters to LLM clipboard`);
     
-    // NEW: If Copy Send is enabled, process LLM in background
     if (copySendEnabled) {
-      console.log('Copy Send enabled, processing in background...');
-      await processLlmInBackground(truncatedText);
+      // Step 2: Process with LLM immediately
+      console.log('Processing with LLM...');
+      mainWindow.webContents.send('status-update', 'Processing with LLM...');
+      
+      // Get current instruction template, RAG, and web search configuration
+      const { instruction, ragAssociations, webSearchConfig } = await getInstructionAndRagFromRenderer();
+      
+      console.log('LLM clipboard processing with:', {
+        ragAssociations: ragAssociations.length,
+        webSearchEnabled: webSearchConfig.enabled
+      });
+      
+      // Build prompt using existing promptBuilder
+      const prompt = promptBuilder.build(instruction, truncatedText);
+      
+      // Get LLM response using smart method with web search support
+      const response = await llmClient.getResponseSmart(prompt, ragAssociations, webSearchConfig);
+      
+      // Handle both old string format and new object format for backward compatibility
+      const responseText = typeof response === 'string' ? response : response.text;
+      const webSearchUsed = typeof response === 'object' ? response.webSearchUsed : false;
+      const ragUsed = typeof response === 'object' ? response.ragUsed : false;
+      const citations = typeof response === 'object' ? response.citations : [];
+      
+      // Log enhanced LLM response for verification
+      console.log('📊 LLM Clipboard Response Summary:', {
+        textLength: responseText.length,
+        webSearchUsed: webSearchUsed,
+        ragUsed: ragUsed,
+        citationsCount: citations.length
+      });
+      
+      // Step 3: Put result directly in clipboard using Electron's clipboard
+      clipboard.writeText(responseText);
+      
+      console.log('=== CTRL+C SUCCESS: Text processed and ready to paste ===');
+      mainWindow.webContents.send('status-update', '✅ Ready to paste - Press Ctrl+V');
+      
     } else {
-      console.log('Copy Send disabled, text ready for manual paste');
+      // Copy Send disabled - just store in LLM clipboard
+      console.log('Copy Send disabled - text stored for manual processing');
+      mainWindow.webContents.send('status-update', `Stored ${truncatedText.length} chars in LLM clipboard`);
     }
     
-    // Clear previous status timeouts to avoid conflicts
-    clearAllTimeouts();
-    
-    const timeoutId = setTimeout(() => {
-      if (activeTimeouts.has(timeoutId)) {
-        mainWindow.webContents.send('status-update', 'Ready');
-        activeTimeouts.delete(timeoutId);
-      }
-    }, 2000);
-    activeTimeouts.add(timeoutId);
-    
   } catch (error) {
-    console.error('LLM Copy error:', error);
-    mainWindow.webContents.send('status-update', 'LLM Copy failed: ' + error.message);
+    console.error('Ctrl+C processing error:', error);
+    mainWindow.webContents.send('status-update', 'Error: ' + error.message);
     
-    // Clear previous status timeouts to avoid conflicts
-    clearAllTimeouts();
-    
-    const timeoutId = setTimeout(() => {
-      if (activeTimeouts.has(timeoutId)) {
-        mainWindow.webContents.send('status-update', 'Ready');
-        activeTimeouts.delete(timeoutId);
-      }
-    }, 3000);
-    activeTimeouts.add(timeoutId);
+    // Clear any incomplete state
+    global.llmClipboard = null;
+    mainWindow.webContents.send('llm-clipboard-updated');
   } finally {
     isLlmOperationInProgress = false;
     pendingOperations.delete(operationId);
   }
 }
 
-async function handleLlmPaste() {
-  // Prevent concurrent operations
-  if (isLlmOperationInProgress) {
-    console.log('=== LLM PASTE BLOCKED: Operation in progress ===');
-    mainWindow.webContents.send('status-update', 'Operation in progress - please wait');
-    return;
-  }
-  
-  console.log('=== LLM PASTE START ===');
-  console.log('Copy Send enabled:', copySendEnabled);
-  console.log('Processed LLM result exists:', !!processedLlmResult);
-  console.log('Global LLM clipboard exists:', !!global.llmClipboard);
-  console.log('LLM clipboard text length:', global.llmClipboard?.text?.length || 0);
-  
-  const operationId = Date.now();
-  isLlmOperationInProgress = true;
-  pendingOperations.add(operationId);
-  
-  try {
-    // Check if already processing something
-    if (isRecording) {
-      console.log('=== LLM PASTE BLOCKED: Recording in progress ===');
-      mainWindow.webContents.send('status-update', 'Cannot paste while recording');
-      return;
-    }
-    
-    // NEW: If Copy Send is enabled and we have a processed result, use it
-    if (copySendEnabled && processedLlmResult) {
-      console.log('=== USING COPY SEND MODE ===');
-      mainWindow.webContents.send('status-update', 'Pasting processed LLM result...');
-      
-      // Inject the processed response
-      const injectionResult = await injector.injectText(processedLlmResult.text);
-      
-      if (injectionResult.success) {
-        console.log('=== COPY SEND PASTE SUCCESS ===');
-        mainWindow.webContents.send('status-update', 'Processed LLM response pasted successfully');
-        
-        // Auto-paste if enabled
-        if (store.get('auto-paste', true)) {
-          if (process.platform === 'darwin') {
-            exec(`osascript -e 'tell application "System Events" to keystroke "v" using command down'`);
-          } else if (process.platform === 'win32') {
-            exec(`powershell -WindowStyle Hidden -command "Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.SendKeys]::SendWait('^v')"`);
-          } else {
-            exec(`xdotool key --clearmodifiers ctrl+v`);
-          }
-        }
-        
-        // Clear the processed result after successful paste
-        processedLlmResult = null;
-        
-      } else {
-        console.log('=== COPY SEND PASTE FAILED ===', injectionResult.error);
-        mainWindow.webContents.send('status-update', 'Paste failed: ' + injectionResult.error);
-      }
-      
-    } else if (copySendEnabled && !processedLlmResult) {
-      console.log('=== COPY SEND MODE BUT NO PROCESSED RESULT ===');
-      mainWindow.webContents.send('status-update', 'No processed result available. Copy text first.');
-      return;
-      
-    } else {
-      console.log('=== USING REGULAR PASTE MODE ===');
-      // Original logic for non-Copy Send mode
-      if (!global.llmClipboard || !global.llmClipboard.text) {
-        console.log('=== REGULAR PASTE FAILED: Empty clipboard ===');
-        mainWindow.webContents.send('status-update', 'LLM clipboard is empty');
-        return;
-      }
-      
-      console.log('LLM clipboard text preview:', global.llmClipboard.text.substring(0, 200) + '...');
-      mainWindow.webContents.send('status-update', 'Processing LLM clipboard...');
-      
-      // Get current instruction
-      const { instruction, ragAssociations } = await getInstructionAndRagFromRenderer();
-      console.log('Instruction:', instruction.substring(0, 100) + '...');
-      console.log('RAG associations:', ragAssociations?.length || 0);
-      
-      // Build prompt using existing promptBuilder
-      const prompt = promptBuilder.build(instruction, global.llmClipboard.text);
-      console.log('Built prompt preview:', prompt.substring(0, 200) + '...');
-      
-      // Get LLM response using existing pipeline (with RAG if available)
-      console.log('Calling LLM API...');
-      let response;
-      if (ragAssociations && ragAssociations.length > 0) {
-        console.log('Using RAG-enabled LLM call');
-        response = await llmClient.getResponseWithRAG(prompt, ragAssociations);
-      } else {
-        console.log('Using regular LLM call');
-        response = await llmClient.getResponse(prompt);
-      }
-      
-      console.log('LLM response received, length:', response?.length || 0);
-      console.log('Response preview:', response?.substring(0, 100) + '...');
-      
-      // Inject response using existing injector
-      console.log('Attempting to inject text...');
-      const injectionResult = await injector.injectText(response);
-      console.log('Injection result:', injectionResult);
-      
-      if (injectionResult.success) {
-        mainWindow.webContents.send('status-update', 'LLM response pasted successfully');
-        
-        // Auto-paste if enabled
-        if (store.get('auto-paste', true)) {
-          if (process.platform === 'darwin') {
-            exec(`osascript -e 'tell application "System Events" to keystroke "v" using command down'`);
-          } else if (process.platform === 'win32') {
-            exec(`powershell -WindowStyle Hidden -command "Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.SendKeys]::SendWait('^v')"`);
-          } else {
-            exec(`xdotool key --clearmodifiers ctrl+v`);
-          }
-        }
-      } else {
-        mainWindow.webContents.send('status-update', 'Paste failed: ' + injectionResult.error);
-      }
-    }
-    
-    // Clear previous status timeouts to avoid conflicts
-    clearAllTimeouts();
-    
-    const timeoutId = setTimeout(() => {
-      if (activeTimeouts.has(timeoutId)) {
-        mainWindow.webContents.send('status-update', 'Ready');
-        activeTimeouts.delete(timeoutId);
-      }
-    }, 2000);
-    activeTimeouts.add(timeoutId);
-    
-  } catch (error) {
-    console.error('LLM Paste error:', error);
-    mainWindow.webContents.send('status-update', 'LLM Paste failed: ' + error.message);
-    
-    // Clear previous status timeouts to avoid conflicts
-    clearAllTimeouts();
-    
-    const timeoutId = setTimeout(() => {
-      if (activeTimeouts.has(timeoutId)) {
-        mainWindow.webContents.send('status-update', 'Ready');
-        activeTimeouts.delete(timeoutId);
-      }
-    }, 3000);
-    activeTimeouts.add(timeoutId);
-  } finally {
-    isLlmOperationInProgress = false;
-    pendingOperations.delete(operationId);
-  }
-}
+// handleLlmPaste function removed - F10 no longer used
+// Ctrl+C now handles the complete workflow: capture → process → clipboard
 
 // Function to get instruction template from renderer
 async function getInstructionFromRenderer() {
@@ -856,6 +695,41 @@ async function getInstructionAndRagFromRenderer() {
         
         let instruction = '';
         let ragAssociations = [];
+        let webSearchConfig = { enabled: false }; // Initialize webSearchConfig with default
+        
+        console.log('=== getInstructionAndRagFromRenderer DEBUG ===');
+        console.log('templateSelect.value:', templateSelect ? templateSelect.value : 'templateSelect not found');
+        console.log('window.userTemplates available:', !!window.userTemplates);
+        console.log('window.ragStores available:', !!window.ragStores);
+        
+        // Force reload of user templates and RAG stores if they're not available
+        if (!window.userTemplates || !window.ragStores) {
+          console.log('FORCE RELOADING: userTemplates or ragStores not available');
+          // Reload from storage immediately
+          if (typeof loadSettings === 'function') {
+            try {
+              // Force reload of userTemplates and ragStores
+              const ipcRenderer = require('electron').ipcRenderer;
+              window.userTemplates = ipcRenderer.sendSync('get-instruction-templates-sync') || [];
+              window.ragStores = ipcRenderer.sendSync('get-rag-stores-sync') || [];
+              console.log('RELOADED - userTemplates:', window.userTemplates.length);
+              console.log('RELOADED - ragStores:', window.ragStores.length);
+            } catch (e) {
+              console.error('Failed to reload templates/stores:', e);
+              window.userTemplates = [];
+              window.ragStores = [];
+            }
+          }
+        }
+        
+        if (window.userTemplates) {
+          console.log('userTemplates length:', window.userTemplates.length);
+          console.log('userTemplates:', window.userTemplates.map(t => ({ id: t.id, name: t.name, ragSearch: t.ragSearch })));
+        }
+        if (window.ragStores) {
+          console.log('ragStores length:', window.ragStores.length);
+          console.log('ragStores:', window.ragStores.map(s => ({ id: s.id, name: s.name, vectorStoreId: s.vectorStoreId })));
+        }
         
         if (templateSelect && templateSelect.value && templateSelect.value.trim() !== '') {
           // Get predefined template
@@ -883,15 +757,43 @@ async function getInstructionAndRagFromRenderer() {
               
               // Get RAG associations if RAG search is enabled
               if (userTemplate.ragSearch && userTemplate.ragAssociations) {
+                console.log('Processing RAG associations for template:', userTemplate.name);
+                console.log('Template ragSearch:', userTemplate.ragSearch);
+                console.log('Template ragAssociations:', userTemplate.ragAssociations);
+                
                 ragAssociations = userTemplate.ragAssociations.map(assoc => {
                   // Find the corresponding RAG store to get vector store ID
                   const ragStore = window.ragStores ? window.ragStores.find(store => store.id === assoc.ragStoreId) : null;
+                  console.log('Looking for RAG store with ID:', assoc.ragStoreId);
+                  console.log('Found RAG store:', ragStore);
+                  
                   return {
                     vectorStoreId: ragStore ? ragStore.vectorStoreId : null,
                     maxResults: assoc.maxResults || 8,
                     includeResults: assoc.includeResults !== false
                   };
                 }).filter(assoc => assoc.vectorStoreId); // Filter out invalid associations
+                
+                console.log('Final ragAssociations after processing:', ragAssociations);
+              }
+              
+              // Get web search configuration (NEW)
+              console.log('🔍 Checking web search for template:', userTemplate.name);
+              console.log('Template.webSearch:', userTemplate.webSearch);
+              console.log('Template.webSearchConfig:', userTemplate.webSearchConfig);
+              
+              if (userTemplate.webSearch && userTemplate.webSearchConfig) {
+                console.log('✅ Processing web search config for template:', userTemplate.name);
+                webSearchConfig = {
+                  enabled: userTemplate.webSearchConfig.enabled,
+                  maxResults: userTemplate.webSearchConfig.maxResults || 5,
+                  includeResults: userTemplate.webSearchConfig.includeResults !== false
+                };
+                console.log('🌐 Final web search config:', webSearchConfig);
+              } else {
+                console.log('❌ No web search configured for template');
+                console.log('userTemplate.webSearch:', userTemplate.webSearch);
+                console.log('userTemplate.webSearchConfig exists:', !!userTemplate.webSearchConfig);
               }
             }
           }
@@ -905,9 +807,15 @@ async function getInstructionAndRagFromRenderer() {
           instruction = 'Please process the following text:';
         }
         
+        console.log('🔄 Final values being returned:');
+        console.log('- Instruction length:', instruction.length);
+        console.log('- RAG associations count:', ragAssociations.length);
+        console.log('- Web search config:', JSON.stringify(webSearchConfig, null, 2));
+        
         return {
           instruction: instruction,
-          ragAssociations: ragAssociations
+          ragAssociations: ragAssociations,
+          webSearchConfig: webSearchConfig
         };
       })()
     `);
@@ -915,7 +823,8 @@ async function getInstructionAndRagFromRenderer() {
     console.error('Error getting instruction and RAG from renderer:', error);
     return {
       instruction: 'Please process the following text:',
-      ragAssociations: []
+      ragAssociations: [],
+      webSearchConfig: { enabled: false }
     };
   }
 }
@@ -932,23 +841,47 @@ async function processLlmInBackground(text) {
   mainWindow.webContents.send('status-update', 'Processing LLM in background...');
   
   try {
-    // Get current instruction template
-    const { instruction, ragAssociations } = await getInstructionAndRagFromRenderer();
+    // Get current instruction template, RAG, and web search configuration
+    const { instruction, ragAssociations, webSearchConfig } = await getInstructionAndRagFromRenderer();
+    
+    console.log('LLM clipboard processing with:', {
+      ragAssociations: ragAssociations.length,
+      webSearchEnabled: webSearchConfig.enabled
+    });
     
     // Build prompt using existing promptBuilder
     const prompt = promptBuilder.build(instruction, text);
     
-    // Get LLM response using existing pipeline (with RAG if available)
-    let response;
-    if (ragAssociations && ragAssociations.length > 0) {
-      response = await llmClient.getResponseWithRAG(prompt, ragAssociations);
-    } else {
-      response = await llmClient.getResponse(prompt);
-    }
+    // Debug: Log RAG and web search information before LLM call
+    console.log('=== RAG & WEB SEARCH DEBUG INFO ===');
+    console.log('Template instruction:', instruction.substring(0, 100) + '...');
+    console.log('RAG associations found:', ragAssociations.length);
+    console.log('RAG associations details:', JSON.stringify(ragAssociations, null, 2));
+    console.log('Will use RAG?', ragAssociations && ragAssociations.length > 0);
+    console.log('Web search enabled?', webSearchConfig.enabled);
+    
+    // Get LLM response using smart method with web search support
+    const response = await llmClient.getResponseSmart(prompt, ragAssociations, webSearchConfig);
+    
+    // Handle both old string format and new object format for backward compatibility
+    const responseText = typeof response === 'string' ? response : response.text;
+    const webSearchUsed = typeof response === 'object' ? response.webSearchUsed : false;
+    const ragUsed = typeof response === 'object' ? response.ragUsed : false;
+    const citations = typeof response === 'object' ? response.citations : [];
+    
+    console.log('📊 Background LLM Processing Summary:', {
+      textLength: responseText.length,
+      webSearchUsed: webSearchUsed,
+      ragUsed: ragUsed,
+      citationsCount: citations.length
+    });
     
     // Store the processed result in memory
     processedLlmResult = {
-      text: response,
+      text: responseText,
+      webSearchUsed: webSearchUsed,
+      ragUsed: ragUsed,
+      citations: citations,
       timestamp: new Date().toISOString(),
       originalText: text,
       instruction: instruction
@@ -1268,6 +1201,10 @@ ipcMain.handle('test-api-key', async (event, apiKey) => {
 ipcMain.handle('get-instruction-templates', () => {
   return store.get('instruction-templates', []);
 });
+// Synchronous version for immediate access
+ipcMain.on('get-instruction-templates-sync', (event) => {
+  event.returnValue = store.get('instruction-templates', []);
+});
 ipcMain.handle('save-instruction-templates', (event, templates) => {
   store.set('instruction-templates', templates);
   return true;
@@ -1381,6 +1318,10 @@ ipcMain.handle('import-templates', async (event) => {
 // RAG Store persistence
 ipcMain.handle('get-rag-stores', () => {
   return store.get('rag-stores', []);
+});
+// Synchronous version for immediate access
+ipcMain.on('get-rag-stores-sync', (event) => {
+  event.returnValue = store.get('rag-stores', []);
 });
 
 ipcMain.handle('save-rag-stores', (event, ragStores) => {
@@ -1546,6 +1487,13 @@ ipcMain.handle('save-llm-shortcuts-enabled', async (event, enabled) => {
   return true;
 });
 
+// Alias for backward compatibility with renderer
+ipcMain.handle('set-llm-shortcuts-enabled', async (event, enabled) => {
+  store.set('llm-shortcuts-enabled', enabled);
+  llmShortcutsEnabled = enabled;
+  return true;
+});
+
 ipcMain.handle('get-llm-shortcuts-enabled', async () => {
   return store.get('llm-shortcuts-enabled', true);
 });
@@ -1561,9 +1509,19 @@ ipcMain.handle('get-copy-send', async () => {
   return store.get('copy-send', false);
 });
 
+// Add IPC handlers for Responses API setting
+ipcMain.handle('save-use-responses-api', async (event, enabled) => {
+  store.set('use-responses-api', enabled);
+  return true;
+});
+
+ipcMain.handle('get-use-responses-api', async () => {
+  return store.get('use-responses-api', false);
+});
+
 // Add missing IPC handlers for model settings
 ipcMain.handle('get-model', async () => {
-  return store.get('model', 'gpt-4o');
+  return store.get('model', 'gpt-4o-mini');
 });
 
 ipcMain.handle('get-temperature', async () => {
@@ -1572,6 +1530,14 @@ ipcMain.handle('get-temperature', async () => {
 
 ipcMain.handle('get-max-tokens', async () => {
   return store.get('max-tokens', 1000);
+});
+
+ipcMain.handle('get-max-results', async () => {
+  return store.get('max-results', 5);
+});
+
+ipcMain.handle('get-dark-mode', async () => {
+  return store.get('dark-mode', false);
 });
 
 // Add missing IPC save handlers for model settings
@@ -1589,6 +1555,253 @@ ipcMain.handle('save-max-tokens', async (event, maxTokens) => {
   store.set('max-tokens', maxTokens);
   return true;
 });
+
+ipcMain.handle('save-max-results', async (event, maxResults) => {
+  store.set('max-results', maxResults);
+  return true;
+});
+
+// Vector Store Search Handler (Direct Search API)
+ipcMain.handle('search-vector-store', async (event, data) => {
+    try {
+        const { vectorStoreId, query, maxResults = 5, filters } = data;
+        
+        // Get API key from store
+        const apiKey = store.get('openai-api-key');
+        if (!apiKey) {
+            throw new Error('OpenAI API key not configured');
+        }
+        
+        const OpenAI = require('openai');
+        const openai = new OpenAI({ apiKey });
+        
+        // Use the direct vector store search API
+        const searchParams = {
+            query,
+            max_num_results: maxResults
+        };
+        
+        // Add filters if provided
+        if (filters) {
+            searchParams.filters = filters;
+        }
+        
+        const searchResults = await openai.vectorStores.search(
+            vectorStoreId,
+            searchParams
+        );
+        
+        return {
+            results: searchResults.data.map(result => ({
+                fileId: result.file_id,
+                filename: result.filename,
+                score: result.score,
+                content: result.content.map(c => c.text).join('\n'),
+                attributes: result.attributes
+            }))
+        };
+        
+    } catch (error) {
+        console.error('Error searching vector store:', error);
+        throw error;
+    }
+});
+
+// RAG Query Handler (Using Responses API with File Search)
+ipcMain.handle('query-with-rag', async (event, data) => {
+    try {
+        const { vectorStoreId, query, model = 'gpt-4o-mini', filters, maxResults = 5 } = data;
+        
+        // Get API key from store
+        const apiKey = store.get('openai-api-key');
+        if (!apiKey) {
+            throw new Error('OpenAI API key not configured');
+        }
+        
+        const OpenAI = require('openai');
+        const openai = new OpenAI({ apiKey });
+        
+        // Use the modern Responses API with file_search tool
+        const tools = [{
+            type: 'file_search',
+            vector_store_ids: [vectorStoreId],
+            max_num_results: maxResults
+        }];
+        
+        // Add filters if provided
+        if (filters) {
+            tools[0].filters = filters;
+        }
+        
+        const response = await openai.responses.create({
+            model,
+            input: query,
+            tools,
+            // Include search results for debugging
+            include: ['output[*].file_search_call.search_results']
+        });
+        
+        // Extract the response text
+        const responseText = response.output_text || 
+                           (response.output[1]?.content?.[0]?.text) ||
+                           'No response generated';
+        
+        // Extract file citations if available
+        const citations = [];
+        if (response.output[1]?.content?.[0]?.annotations) {
+            for (const annotation of response.output[1].content[0].annotations) {
+                if (annotation.type === 'file_citation') {
+                    citations.push({
+                        fileId: annotation.file_id,
+                        filename: annotation.filename
+                    });
+                }
+            }
+        }
+        
+        // Extract detailed search results if available
+        const searchResults = [];
+        if (response.output[0]?.results) {
+            for (const result of response.output[0].results) {
+                searchResults.push({
+                    fileId: result.file_id,
+                    filename: result.filename,
+                    score: result.score,
+                    content: result.text,
+                    attributes: result.attributes
+                });
+            }
+        }
+        
+        return {
+            response: responseText,
+            citations,
+            searchResults
+        };
+        
+    } catch (error) {
+        console.error('Error in RAG query:', error);
+        throw error;
+    }
+});
+
+// Vector Store Creation Handler
+ipcMain.handle('create-vector-store', async (event, data) => {
+    try {
+        const { name, fileName, fileContent, fileType, fileSize } = data;
+        
+        // Additional validation for large files
+        const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+        if (fileSize > MAX_FILE_SIZE) {
+            throw new Error(`File size exceeds 20MB limit`);
+        }
+        
+        // Get API key from store
+        const apiKey = store.get('openai-api-key');
+        if (!apiKey) {
+            throw new Error('OpenAI API key not configured');
+        }
+        
+        // Show progress for large files
+        if (fileSize > 5 * 1024 * 1024) { // > 5MB
+            event.sender.send('upload-progress-update', {
+                percentage: 50,
+                status: 'Uploading large file to OpenAI...'
+            });
+        }
+        
+        // Create vector store using OpenAI API
+        const vectorStoreId = await createOpenAIVectorStore(apiKey, name, fileName, fileContent, fileType);
+        
+        return { vectorStoreId };
+        
+    } catch (error) {
+        console.error('Error creating vector store:', error);
+        throw error;
+    }
+});
+
+async function createOpenAIVectorStore(apiKey, name, fileName, fileContent, fileType) {
+    const OpenAI = require('openai');
+    const fs = require('fs').promises;
+    const path = require('path');
+    const openai = new OpenAI({ apiKey });
+    
+    try {
+        // Step 1: Create a temporary file for upload
+        const tempDir = require('os').tmpdir();
+        const tempFilePath = path.join(tempDir, fileName);
+        
+        let fileBuffer;
+        // Handle different content types
+        if (fileContent instanceof ArrayBuffer) {
+            // Binary file (PDF, DOC, DOCX)
+            fileBuffer = Buffer.from(fileContent);
+        } else {
+            // Text file (TXT, MD, JSON, CSV)
+            fileBuffer = Buffer.from(fileContent, 'utf8');
+        }
+        
+        // Write to temporary file
+        await fs.writeFile(tempFilePath, fileBuffer);
+        
+        // Step 2: Upload file to OpenAI
+        const file = await openai.files.create({
+            file: require('fs').createReadStream(tempFilePath),
+            purpose: 'assistants'
+        });
+        
+        // Clean up temporary file
+        await fs.unlink(tempFilePath).catch(() => {}); // Ignore errors
+        
+        // Step 3: Create vector store
+        const vectorStore = await openai.vectorStores.create({
+            name: name,
+            expires_after: { anchor: 'last_active_at', days: 7 } // Auto-cleanup after 7 days
+        });
+        
+        // Step 4: Add file to vector store with metadata
+        const vectorStoreFile = await openai.vectorStores.files.create(
+            vectorStore.id,
+            {
+                file_id: file.id,
+                // Add metadata for filtering
+                attributes: {
+                    filename: fileName,
+                    upload_date: new Date().toISOString(),
+                    file_type: fileType || 'text/plain',
+                    original_name: fileName
+                }
+            }
+        );
+        
+        // Step 5: Poll until file is processed
+        let attempts = 0;
+        const maxAttempts = 60; // 2 minute timeout
+        
+        while (attempts < maxAttempts) {
+            const fileStatus = await openai.vectorStores.files.retrieve(
+                vectorStore.id,
+                vectorStoreFile.id
+            );
+            
+            if (fileStatus.status === 'completed') {
+                return vectorStore.id;
+            } else if (fileStatus.status === 'failed') {
+                throw new Error(`Vector store file processing failed: ${fileStatus.last_error}`);
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+            attempts++;
+        }
+        
+        throw new Error('Vector store creation timeout');
+        
+    } catch (error) {
+        console.error('OpenAI API error:', error);
+        throw new Error(`Failed to create vector store: ${error.message}`);
+    }
+}
 
 // Initialize settings function
 async function initializeSettings() {
