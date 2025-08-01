@@ -34,17 +34,6 @@
                 <div class="template-selector">
                     <select id="templateSelect" class="template-select">
                         <option value="" class="custom-instruction-option">🔧 Custom instruction...</option>
-                        <option value="rewrite" class="system-template-option">⚙️ Rewrite</option>
-                        <option value="summarize" class="system-template-option">⚙️ Summarize</option>
-                        <option value="translate" class="system-template-option">⚙️ Translate</option>
-                        <option value="expand" class="system-template-option">⚙️ Expand</option>
-                        <option value="simplify" class="system-template-option">⚙️ Simplify</option>
-                        <option value="formal" class="system-template-option">⚙️ Formal</option>
-                        <option value="casual" class="system-template-option">⚙️ Casual</option>
-                        <option value="bullet" class="system-template-option">⚙️ Bullet Points</option>
-                        <option value="question" class="system-template-option">⚙️ Generate Questions</option>
-                        <option value="action" class="system-template-option">⚙️ Extract Action Items</option>
-                        
                     </select>
                     <button id="addTemplateBtn" class="btn btn-small">Add</button>
                     <button id="editTemplateBtn" class="btn btn-small">Edit</button>
@@ -199,7 +188,12 @@
                             🧪 Use Responses API (Beta):
                             <span class="setting-tooltip" title="Use OpenAI's newer Responses API for better RAG performance. Switch back to Chat Completions API if you encounter issues.">ℹ️</span>
                         </label>
-                        <input type="checkbox" id="useResponsesAPICheckbox" class="setting-checkbox">
+                        <div class="toggle-switch-container">
+                            <input type="checkbox" id="useResponsesAPICheckbox" class="toggle-switch-input" title="Use OpenAI's newer Responses API for better RAG performance">
+                            <label for="useResponsesAPICheckbox" class="toggle-switch-label">
+                                <span class="toggle-switch-slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <div class="setting-item">
                         <label for="temperatureSlider">Temperature:</label>

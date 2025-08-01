@@ -644,25 +644,6 @@ async function getInstructionFromRenderer() {
         const instructionInput = document.getElementById('instructionInput');
         
         if (templateSelect && templateSelect.value && templateSelect.value.trim() !== '') {
-          // Get predefined template
-          const builtInTemplates = {
-            'rewrite': 'Please rewrite the following transcript in a clear and professional manner:',
-            'summarize': 'Please provide a concise summary of the following transcript:',
-            'translate': 'Please translate the following transcript to English (if not already in English):',
-            'expand': 'Please expand on the ideas mentioned in the following transcript:',
-            'simplify': 'Please simplify and clarify the following transcript:',
-            'formal': 'Please convert the following transcript into formal business language:',
-            'casual': 'Please convert the following transcript into casual, conversational language:',
-            'bullet': 'Please convert the following transcript into bullet points:',
-            'question': 'Please generate questions based on the following transcript:',
-            'action': 'Please extract action items from the following transcript:'
-          };
-          
-          // Check if it's a built-in template
-          if (builtInTemplates[templateSelect.value]) {
-            return builtInTemplates[templateSelect.value];
-          }
-          
           // Check if it's a user template
           if (window.userTemplates) {
             const userTemplate = window.userTemplates.find(t => t.id === templateSelect.value);
@@ -732,24 +713,8 @@ async function getInstructionAndRagFromRenderer() {
         }
         
         if (templateSelect && templateSelect.value && templateSelect.value.trim() !== '') {
-          // Get predefined template
-          const builtInTemplates = {
-            'rewrite': 'Please rewrite the following transcript in a clear and professional manner:',
-            'summarize': 'Please provide a concise summary of the following transcript:',
-            'translate': 'Please translate the following transcript to English (if not already in English):',
-            'expand': 'Please expand on the ideas mentioned in the following transcript:',
-            'simplify': 'Please simplify and clarify the following transcript:',
-            'formal': 'Please convert the following transcript into formal business language:',
-            'casual': 'Please convert the following transcript into casual, conversational language:',
-            'bullet': 'Please convert the following transcript into bullet points:',
-            'question': 'Please generate questions based on the following transcript:',
-            'action': 'Please extract action items from the following transcript:'
-          };
-          
-          // Check if it's a built-in template
-          if (builtInTemplates[templateSelect.value]) {
-            instruction = builtInTemplates[templateSelect.value];
-          } else if (window.userTemplates) {
+          // Check if it's a user template
+          if (window.userTemplates) {
             // Check if it's a user template
             const userTemplate = window.userTemplates.find(t => t.id === templateSelect.value);
             if (userTemplate) {

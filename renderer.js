@@ -109,19 +109,7 @@ let currentEditingRagStore = null;
 // RAG Search variables
 let currentTemplate = null;
 
-// Prompt templates
-const promptTemplates = {
-    'rewrite': 'Please rewrite the following transcript in a clear and professional manner:',
-    'summarize': 'Please provide a concise summary of the following transcript:',
-    'translate': 'Please translate the following transcript to English (if not already in English):',
-    'expand': 'Please expand on the ideas mentioned in the following transcript:',
-    'simplify': 'Please simplify and clarify the following transcript:',
-    'formal': 'Please convert the following transcript into formal business language:',
-    'casual': 'Please convert the following transcript into casual, conversational language:',
-    'bullet': 'Please convert the following transcript into bullet points:',
-    'question': 'Please generate questions based on the following transcript:',
-    'action': 'Please extract action items from the following transcript:'
-};
+// Custom templates only - no system templates
 
 // Initialize the application
 async function initializeApp() {
@@ -1068,15 +1056,6 @@ function renderTemplateOptions() {
         templateSelect.add(opt);
     });
     
-    // Update built-in template options with icons if not already done
-    const builtInOptions = Array.from(templateSelect.options).filter(opt => !opt.dataset.userTemplate && opt.value !== '');
-    builtInOptions.forEach(opt => {
-        if (!opt.text.startsWith('⚙️')) {
-            opt.text = `⚙️ ${opt.text}`;
-            opt.className = 'system-template-option';
-        }
-    });
-    
     // Update the first option (Custom instruction) with icon
     const firstOption = templateSelect.options[0];
     if (firstOption && firstOption.value === '' && !firstOption.text.startsWith('🔧')) {
@@ -1090,22 +1069,17 @@ function onTemplateSelect(e) {
     let text = '';
     let template = null;
     
-    if (promptTemplates[val]) {
-        text = promptTemplates[val];
-        // Built-in templates don't have RAG or web search functionality
-        currentTemplate = null;
+    // Only handle user templates now - no system templates
+    template = userTemplates.find(t => t.id === val);
+    if (template) {
+        text = template.content;
+        
+        // Initialize defaults for older templates (backward compatibility)
+        initializeWebSearchDefaults(template);
+        
+        currentTemplate = template;
     } else {
-        template = userTemplates.find(t => t.id === val);
-        if (template) {
-            text = template.content;
-            
-            // Initialize defaults for older templates (backward compatibility)
-            initializeWebSearchDefaults(template);
-            
-            currentTemplate = template;
-        } else {
-            currentTemplate = null;
-        }
+        currentTemplate = null;
     }
     
     instructionInput.value = text;
